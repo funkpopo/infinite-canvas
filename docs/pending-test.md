@@ -1,5 +1,6 @@
 # 待测试
 
+- 生图工作台和画布生图会把参考图按当前顺序显示为 `图片1`、`图片2` 等编号，并在图生图请求的实际提示词中注入编号说明；需要验证 `/image` 参考图排序、画布配置节点输入顺序和画布助手参考图编号一致。
 - GPT Image 生图请求会在前端把 `9:16`、`16:9` 等比例转换成合法 `WIDTHxHEIGHT` 尺寸，并在非法尺寸时直接显示中文错误，避免上游返回 `invalid_value Invalid size`。
 - Docker 部署时，`DATABASE_DSN=data/infinite-canvas.db` 会在存在 `/app/data` 挂载目录时自动归一到 `/app/data/infinite-canvas.db`，需要验证后台模型配置不会再因为工作目录变为 `/app/web` 而读到空库。
 - Seedance 参考视频被火山判定包含真人或隐私信息时，前端错误摘要会提示改用不含真人的视频、官方允许的模型产物或已授权的 `asset://` 素材；参考素材上传目录改为跟随 SQLite 数据目录，并补充公开素材的 HEAD 访问。

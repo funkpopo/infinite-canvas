@@ -4,6 +4,7 @@ import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
+import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 
@@ -223,9 +224,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const requestPrompt = buildImageReferencePromptText(prompt, references);
     const formData = new FormData();
     formData.set("model", config.model);
-    formData.set("prompt", withSystemPrompt(config, prompt));
+    formData.set("prompt", withSystemPrompt(config, requestPrompt));
     formData.set("n", String(n));
     formData.set("response_format", "b64_json");
     if (quality) {

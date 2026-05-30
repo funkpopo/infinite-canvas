@@ -16,6 +16,7 @@ import { requestEdit, requestGeneration, requestImageQuestion, type ChatCompleti
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import type { ReferenceImage } from "@/types/image";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -398,8 +399,8 @@ function AssistantComposer({
         <div className="px-2 pb-2" onWheelCapture={(event) => event.stopPropagation()}>
             {references.length ? (
                 <div className="thin-scrollbar mb-1.5 flex max-w-full gap-1.5 overflow-x-auto px-1 pb-1">
-                    {references.map((item) => (
-                        <AssistantReferenceChip key={item.id} item={item} onRemove={() => onRemoveReference(item.id)} />
+                    {references.map((item, index) => (
+                        <AssistantReferenceChip key={item.id} item={item} label={assistantImageReferenceLabel(references, index)} onRemove={() => onRemoveReference(item.id)} />
                     ))}
                 </div>
             ) : null}
@@ -584,20 +585,23 @@ function AssistantHistory({
 function MessageReferences({ message }: { message: CanvasAssistantMessage }) {
     return (
         <div className={cn("flex max-w-[88%] flex-wrap gap-2", message.role === "user" ? "justify-end" : "justify-start")}>
-            {message.references?.map((item) => (
-                <AssistantReferenceChip key={item.id} item={item} />
+            {message.references?.map((item, index, references) => (
+                <AssistantReferenceChip key={item.id} item={item} label={assistantImageReferenceLabel(references, index)} />
             ))}
         </div>
     );
 }
 
-function AssistantReferenceChip({ item, onRemove }: { item: CanvasAssistantReference; onRemove?: () => void }) {
+function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
     return (
         <div className="group/chip relative inline-flex h-8 max-w-[150px] shrink-0 items-center gap-1.5 rounded-lg text-sm" style={{ color: theme.node.text }}>
             {item.dataUrl ? (
-                <img src={item.dataUrl} alt="" className="size-8 rounded-lg object-cover" />
+                <span className="relative block size-8 shrink-0">
+                    <img src={item.dataUrl} alt="" className="size-8 rounded-lg object-cover" />
+                    {label ? <span className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-medium leading-none text-white">{label}</span> : null}
+                </span>
             ) : (
                 <span className="grid size-8 place-items-center rounded-lg border text-sm font-medium" style={{ background: theme.node.panel, borderColor: theme.node.activeStroke }}>
                     {text}
@@ -616,6 +620,12 @@ function AssistantReferenceChip({ item, onRemove }: { item: CanvasAssistantRefer
             ) : null}
         </div>
     );
+}
+
+function assistantImageReferenceLabel(references: CanvasAssistantReference[], index: number) {
+    if (!references[index]?.dataUrl) return undefined;
+    const imageIndex = references.slice(0, index + 1).filter((item) => item.dataUrl).length - 1;
+    return imageIndex >= 0 ? imageReferenceLabel(imageIndex) : undefined;
 }
 
 function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
