@@ -31,12 +31,13 @@ export async function uploadImage(input: string | Blob): Promise<UploadedImage> 
 }
 
 async function storeImageBlob(blob: Blob): Promise<UploadedImage> {
+    const imageBlob = await normalizeImageBlob(blob);
     const storageKey = `image:${nanoid()}`;
-    await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
+    await store.setItem(storageKey, imageBlob);
+    const url = URL.createObjectURL(imageBlob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
-    return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+    return { url, storageKey, width: meta.width, height: meta.height, bytes: imageBlob.size, mimeType: imageBlob.type || meta.mimeType };
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
@@ -45,18 +46,26 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
     if (!blob) return fallback;
-    const url = URL.createObjectURL(blob);
+    const imageBlob = await normalizeImageBlob(blob).catch(() => null);
+    if (!imageBlob) return fallback;
+    if (imageBlob !== blob) await store.setItem(storageKey, imageBlob);
+    const url = URL.createObjectURL(imageBlob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function getImageBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    const blob = await store.getItem<Blob>(storageKey);
+    if (!blob) return null;
+    const imageBlob = await normalizeImageBlob(blob).catch(() => null);
+    if (imageBlob && imageBlob !== blob) await store.setItem(storageKey, imageBlob);
+    return imageBlob;
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
+    const imageBlob = await normalizeImageBlob(blob);
+    await store.setItem(storageKey, imageBlob);
+    const url = URL.createObjectURL(imageBlob);
     objectUrls.set(storageKey, url);
     return url;
 }
@@ -112,12 +121,12 @@ async function fetchImageBlob(url: string) {
     try {
         const response = await fetch(url);
         if (!response.ok) throw new Error(`读取图片失败：${response.status}`);
-        return await response.blob();
+        return await normalizeImageBlob(await response.blob());
     } catch (error) {
         if (!isRemoteUrl(url)) throw error;
         const response = await fetch(`/media-proxy?url=${encodeURIComponent(url)}`);
         if (!response.ok) throw new Error(`读取远程图片失败：${response.status}`);
-        return response.blob();
+        return normalizeImageBlob(await response.blob());
     }
 }
 
@@ -127,4 +136,20 @@ function isRemoteUrl(value: string) {
 
 function proxiedImageUrl(url: string) {
     return isRemoteUrl(url) ? `/media-proxy?url=${encodeURIComponent(url)}` : url;
+}
+
+async function normalizeImageBlob(blob: Blob) {
+    if (blob.type.startsWith("image/")) return blob;
+    const mimeType = await sniffImageMimeType(blob);
+    if (!mimeType) throw new Error("读取到的内容不是图片");
+    return new Blob([blob], { type: mimeType });
+}
+
+async function sniffImageMimeType(blob: Blob) {
+    const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+    return "";
 }
