@@ -314,7 +314,7 @@ export default function VideoPage() {
                 }
                 if (state.status === "failed") throw new Error(state.error);
                 if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
-                await delay(log.task.provider === "seedance" ? 5000 : 2500);
+                await delay(log.task.provider === "seedance" || log.task.provider === "agnes" ? 5000 : 2500);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";

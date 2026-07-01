@@ -9,7 +9,7 @@ import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ImageApiMode, type ModelCapability, type ModelChannel, type VideoApiMode } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -37,6 +37,16 @@ const modelGroups: ModelGroup[] = [
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
     { label: "Gemini", value: "gemini" },
+];
+
+const imageApiModeOptions: Array<{ label: string; value: ImageApiMode }> = [
+    { label: "OpenAI Images", value: "openai" },
+    { label: "Agnes Image", value: "agnes" },
+];
+
+const videoApiModeOptions: Array<{ label: string; value: VideoApiMode }> = [
+    { label: "OpenAI Videos", value: "openai" },
+    { label: "Agnes Video", value: "agnes" },
 ];
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
@@ -262,7 +272,7 @@ export function AppConfigModal() {
                                                 <div className="min-w-0">
                                                     <div className="truncate text-sm font-semibold">{channel.name || "未命名渠道"}</div>
                                                     <div className="mt-1 text-xs text-stone-500">
-                                                        {apiFormatLabel(channel.apiFormat)} · 已保存 {channel.models.length} 个模型
+                                                        {apiFormatLabel(channel.apiFormat)} · {imageApiModeLabel(channel.imageApiMode)} · {videoApiModeLabel(channel.videoApiMode)} · 已保存 {channel.models.length} 个模型
                                                     </div>
                                                 </div>
                                                 <div className="flex shrink-0 gap-2">
@@ -278,6 +288,12 @@ export function AppConfigModal() {
                                                 </Form.Item>
                                                 <Form.Item label="调用格式" className="mb-0">
                                                     <Select value={channel.apiFormat} options={apiFormatOptions} onChange={(value: ApiCallFormat) => updateChannelApiFormat(channel, value)} />
+                                                </Form.Item>
+                                                <Form.Item label="图片 API 类型" className="mb-0">
+                                                    <Select value={channel.imageApiMode} options={imageApiModeOptions} disabled={channel.apiFormat === "gemini"} onChange={(value: ImageApiMode) => updateChannel(channel.id, { imageApiMode: value })} />
+                                                </Form.Item>
+                                                <Form.Item label="视频 API 类型" className="mb-0">
+                                                    <Select value={channel.videoApiMode} options={videoApiModeOptions} disabled={channel.apiFormat === "gemini"} onChange={(value: VideoApiMode) => updateChannel(channel.id, { videoApiMode: value })} />
                                                 </Form.Item>
                                                 <Form.Item label="Base URL" className="mb-0">
                                                     <Input value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
@@ -447,6 +463,8 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
+        imageApiMode: channels[0]?.imageApiMode || config.imageApiMode,
+        videoApiMode: channels[0]?.videoApiMode || config.videoApiMode,
         imageModels,
         videoModels,
         textModels,
@@ -479,6 +497,14 @@ function uniqueModels(models: string[]) {
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {
     return apiFormat === "gemini" ? "Gemini" : "OpenAI";
+}
+
+function imageApiModeLabel(imageApiMode: ImageApiMode) {
+    return imageApiMode === "agnes" ? "Agnes Image" : "OpenAI Images";
+}
+
+function videoApiModeLabel(videoApiMode: VideoApiMode) {
+    return videoApiMode === "agnes" ? "Agnes Video" : "OpenAI Videos";
 }
 
 function formatWebdavTime(value: string) {

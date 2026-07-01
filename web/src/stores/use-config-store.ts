@@ -6,6 +6,8 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 export type ApiCallFormat = "openai" | "gemini";
+export type ImageApiMode = "openai" | "agnes";
+export type VideoApiMode = "openai" | "agnes";
 
 export type ModelChannel = {
     id: string;
@@ -13,6 +15,8 @@ export type ModelChannel = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    imageApiMode: ImageApiMode;
+    videoApiMode: VideoApiMode;
     models: string[];
 };
 
@@ -21,6 +25,8 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    imageApiMode: ImageApiMode;
+    videoApiMode: VideoApiMode;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -67,6 +73,8 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
+    imageApiMode: "openai",
+    videoApiMode: "openai",
     channels: [
         {
             id: "default",
@@ -74,6 +82,8 @@ export const defaultConfig: AiConfig = {
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
+            imageApiMode: "openai",
+            videoApiMode: "openai",
             models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
         },
     ],
@@ -213,6 +223,8 @@ export const useConfigStore = create<ConfigStore>()(
                         ...config,
                         channelMode: "local",
                         apiFormat: normalizeApiFormat(config.apiFormat),
+                        imageApiMode: normalizeImageApiMode(config.imageApiMode),
+                        videoApiMode: normalizeVideoApiMode(config.videoApiMode),
                         channels,
                         models,
                         imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
@@ -259,6 +271,8 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
         apiFormat,
+        imageApiMode: normalizeImageApiMode(channel?.imageApiMode),
+        videoApiMode: normalizeVideoApiMode(channel?.videoApiMode),
         models: uniqueRawModels(channel?.models || []),
     };
 }
@@ -308,7 +322,7 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.includes(model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
+    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, imageApiMode: config.imageApiMode, videoApiMode: config.videoApiMode, models: config.models.map(modelOptionName) });
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -319,6 +333,8 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+        imageApiMode: channel.imageApiMode,
+        videoApiMode: channel.videoApiMode,
     };
 }
 
@@ -340,6 +356,8 @@ function normalizeChannels(config: AiConfig) {
                 baseUrl: config.baseUrl || defaultConfig.baseUrl,
                 apiKey: config.apiKey || "",
                 apiFormat: config.apiFormat || defaultConfig.apiFormat,
+                imageApiMode: config.imageApiMode || defaultConfig.imageApiMode,
+                videoApiMode: config.videoApiMode || defaultConfig.videoApiMode,
                 models: uniqueRawModels([
                     ...(config.models || []),
                     config.model,
@@ -360,6 +378,14 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
     return apiFormat === "gemini" ? "gemini" : "openai";
+}
+
+function normalizeImageApiMode(imageApiMode: unknown): ImageApiMode {
+    return imageApiMode === "agnes" ? "agnes" : "openai";
+}
+
+function normalizeVideoApiMode(videoApiMode: unknown): VideoApiMode {
+    return videoApiMode === "agnes" ? "agnes" : "openai";
 }
 
 function uniqueRawModels(models: string[]) {

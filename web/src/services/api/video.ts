@@ -10,6 +10,17 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type VideoResponse = { id: string; status?: string; error?: { message?: string } };
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
+type AgnesVideoTask = {
+    id?: string;
+    task_id?: string;
+    video_id?: string;
+    status?: "queued" | "in_progress" | "completed" | "failed" | string;
+    remixed_from_video_id?: string;
+    video_url?: string;
+    url?: string;
+    output?: { video_url?: string; url?: string } | null;
+    error?: { message?: string } | null;
+};
 type SeedanceTask = {
     id: string;
     status?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
@@ -20,7 +31,7 @@ type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -36,13 +47,13 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    const delayMs = task.provider === "seedance" ? 5000 : 2500;
+    const delayMs = task.provider === "seedance" || task.provider === "agnes" ? 5000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
         if (state.status === "completed") return state.result;
         if (state.status === "failed") throw new Error(state.error);
-        if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : ""}视频生成超时，请稍后重试`);
+        if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : task.provider === "agnes" ? "Agnes " : ""}视频生成超时，请稍后重试`);
         await delay(delayMs, options?.signal);
     }
     throw new Error("视频生成超时，请稍后重试");
@@ -55,6 +66,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
+    if (requestConfig.videoApiMode === "agnes") {
+        return createAgnesTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考素材");
     }
@@ -64,7 +78,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
-    return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
+    if (task.provider === "seedance") return pollSeedanceTask(requestConfig, task, options);
+    if (task.provider === "agnes") return pollAgnesTask(requestConfig, task, options);
+    return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
@@ -104,6 +120,46 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
+    }
+}
+
+async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
+    const images = await Promise.all(references.slice(0, 7).map((image) => resolveAgnesImageUrl(image)));
+    const { width, height } = normalizeAgnesVideoSize(config.size, config.vquality);
+    const payload = {
+        model: modelOptionName(model),
+        prompt,
+        width,
+        height,
+        num_frames: normalizeAgnesNumFrames(config.videoSeconds),
+        frame_rate: 24,
+        ...(images.length === 1 ? { image: images[0] } : {}),
+        ...(images.length > 1 ? { extra_body: { image: images } } : {}),
+    };
+
+    try {
+        const created = unwrapAgnesTask((await axios.post<ApiEnvelope<AgnesVideoTask>>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const id = created.video_id || created.id || created.task_id;
+        if (!id) throw new Error("Agnes Video 接口没有返回任务 ID");
+        return { id, provider: "agnes", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Agnes Video 任务创建失败"));
+    }
+}
+
+async function pollAgnesTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const state = unwrapAgnesTask((await axios.get<ApiEnvelope<AgnesVideoTask>>(agnesVideoResultUrl(config, task.id, task.model), { headers: aiHeaders(config), signal: options?.signal })).data);
+        if (state.status === "completed" || state.status === "succeeded") {
+            const url = readAgnesVideoUrl(state);
+            if (!url) return { status: "failed", error: "Agnes Video 任务成功但没有返回视频 URL" };
+            return { status: "completed", result: await videoResultFromUrl(url, options) };
+        }
+        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: state.error?.message || "Agnes Video 生成失败" };
+        return { status: "pending" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Agnes Video 任务查询失败"));
     }
 }
 
@@ -173,6 +229,14 @@ function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
 
 function seedanceApiUrl(config: AiConfig, taskId?: string) {
     return buildApiUrl(config.baseUrl, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
+}
+
+function agnesVideoResultUrl(config: AiConfig, videoId: string, model: string) {
+    const baseUrl = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+    const url = new URL(`${baseUrl}/agnesapi`);
+    url.searchParams.set("video_id", videoId);
+    url.searchParams.set("model_name", modelOptionName(model));
+    return url.toString();
 }
 
 async function buildSeedanceContent(config: AiConfig, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
@@ -254,12 +318,38 @@ function normalizeVideoResolution(value: string) {
     return `${resolution}p`;
 }
 
+function normalizeAgnesVideoSize(size: string, resolution: string) {
+    const normalized = normalizeVideoSize(size);
+    const custom = normalized.match(/^(\d+)x(\d+)$/);
+    if (custom && size !== "auto") return { width: Number(custom[1]), height: Number(custom[2]) };
+    const normalizedResolution = normalizeVideoResolution(resolution);
+    const longSide = normalizedResolution === "480p" ? 854 : normalizedResolution === "1080p" ? 1920 : 1280;
+    const shortSide = normalizedResolution === "480p" ? 480 : normalizedResolution === "1080p" ? 1080 : 720;
+    const vertical = ["9:16", "2:3", "3:4", "720x1280", "1024x1792"].includes(size);
+    return vertical ? { width: shortSide, height: longSide } : { width: longSide, height: shortSide };
+}
+
+function normalizeAgnesNumFrames(value: string) {
+    const seconds = Math.max(1, Math.min(18, Math.floor(Number(value) || 5)));
+    const target = Math.min(441, Math.max(81, Math.round(seconds * 24)));
+    const n = Math.max(1, Math.floor((target - 1) / 8));
+    return n * 8 + 1;
+}
+
 function unwrapVideoResponse(payload: ApiVideoResponse) {
     return unwrapEnvelope(payload, "接口没有返回视频任务");
 }
 
 function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {
     return unwrapEnvelope(payload, "Seedance 接口没有返回任务");
+}
+
+function unwrapAgnesTask(payload: ApiEnvelope<AgnesVideoTask>) {
+    return unwrapEnvelope(payload, "Agnes Video 接口没有返回任务");
+}
+
+function readAgnesVideoUrl(task: AgnesVideoTask) {
+    return task.remixed_from_video_id || task.video_url || task.url || task.output?.video_url || task.output?.url || "";
 }
 
 function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
@@ -302,6 +392,14 @@ async function assertVideoBlob(blob: Blob) {
 
 function isPublicMediaUrl(value: string) {
     return /^https?:\/\//i.test(value || "");
+}
+
+async function resolveAgnesImageUrl(image: ReferenceImage) {
+    const directUrl = image.url || image.dataUrl;
+    if (directUrl) return directUrl;
+    const dataUrl = await imageToDataUrl(image);
+    if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
+    return dataUrl;
 }
 
 function delay(ms: number, signal?: AbortSignal) {

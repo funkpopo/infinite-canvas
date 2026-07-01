@@ -111,6 +111,7 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+const AGNES_DEFAULT_IMAGE_SIZE = "1024x1024";
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
@@ -607,12 +608,44 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
+async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, references, options));
+    return (await Promise.all(requests)).flat();
+}
+
+async function requestAgnesImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const requestSize = resolveRequestSize(quality, config.size) || AGNES_DEFAULT_IMAGE_SIZE;
+    const images = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
+    const response = await axios.post<ImageApiResponse>(
+        aiApiUrl(config, "/images/generations"),
+        {
+            model: config.model,
+            prompt: withSystemPrompt(config, prompt),
+            size: requestSize,
+            ...(images.length ? { extra_body: { image: images, response_format: "b64_json" } } : { return_base64: true }),
+        },
+        {
+            headers: aiHeaders(config, "application/json"),
+            signal: options?.signal,
+        },
+    );
+    return parseImagePayload(response.data);
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (requestConfig.imageApiMode === "agnes") {
+        try {
+            return await requestAgnesImages(requestConfig, prompt, [], n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -651,6 +684,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (requestConfig.imageApiMode === "agnes") {
+        if (mask) throw new Error("Agnes Image 暂不支持蒙版编辑");
+        try {
+            return await requestAgnesImages(requestConfig, requestPrompt, references, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
