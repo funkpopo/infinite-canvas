@@ -125,7 +125,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
 
 async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
-    const images = await Promise.all(references.slice(0, 7).map((image) => resolveAgnesImageUrl(image)));
+    const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesPublicImageUrl(image)));
     const { width, height } = normalizeAgnesVideoSize(config.size, config.vquality);
     const payload = {
         model: modelOptionName(model),
@@ -394,12 +394,30 @@ function isPublicMediaUrl(value: string) {
     return /^https?:\/\//i.test(value || "");
 }
 
-async function resolveAgnesImageUrl(image: ReferenceImage) {
+async function resolveAgnesPublicImageUrl(image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
-    if (directUrl) return directUrl;
+    if (isPublicHttpUrl(directUrl)) return directUrl;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
-    return dataUrl;
+    const response = await fetch(dataUrl);
+    if (!response.ok) throw new Error("读取参考图失败");
+    const blob = await response.blob();
+    const formData = new FormData();
+    formData.set("file", blob, image.name || "reference.png");
+    const upload = await fetch("/media-public-url", { method: "POST", body: formData });
+    const payload = (await upload.json().catch(() => null)) as { url?: string; msg?: string } | null;
+    if (!upload.ok || !payload?.url) throw new Error(payload?.msg || `上传 Agnes 参考图失败：${upload.status}`);
+    return payload.url;
+}
+
+function isPublicHttpUrl(value: string) {
+    if (!/^https?:\/\//i.test(value)) return false;
+    try {
+        const host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+        return !["localhost", "::1", "0.0.0.0"].includes(host) && !host.endsWith(".localhost") && !/^127\./.test(host) && !/^10\./.test(host) && !/^192\.168\./.test(host) && !/^169\.254\./.test(host) && !/^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+    } catch {
+        return false;
+    }
 }
 
 function delay(ms: number, signal?: AbortSignal) {

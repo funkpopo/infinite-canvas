@@ -13,6 +13,6 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 参考图显示：生图和视频工作台的参考图缩略图会先解析本地 `storageKey`，远程图片 URL 会改用同源媒体代理展示，避免只显示图片名称。
 - 图片存储修复：读取本地图片 Blob 和媒体代理响应时会按文件头修正 PNG/JPEG/GIF/WebP 的 MIME，避免旧记录因 `text/html` 类型的图片 Blob 导致预览和参考图无法显示。
 - 生图结果持久化：生图工作台单张图片返回后立即落到本地图片存储，生成记录和画布节点不再复用已失效的 `blob:` 地址。
-- Agnes Video 兼容：每个模型渠道新增视频 API 类型选择，支持 Agnes Video 创建视频任务、按 `video_id` 查询结果，并在视频工作台历史任务轮询中使用 Agnes 任务间隔。
+- Agnes Video 兼容：每个模型渠道新增视频 API 类型选择，支持 Agnes Video 创建视频任务、按 `video_id` 查询结果，并在视频工作台历史任务轮询中使用 Agnes 任务间隔；图生视频参考图会先上传为 Agnes 可读取的临时公开 URL，再按 Agnes Video V2.0 要求传入 `image` / `extra_body.image`。
 - Gemini 调用格式：支持拉取 Gemini 模型列表，并用于文本问答、在线 Agent 工具调用、基础生图和图生图请求。
 - 音频和视频生成：选择 Gemini 调用格式时先给出不支持提示，仍需使用 OpenAI 兼容渠道。
