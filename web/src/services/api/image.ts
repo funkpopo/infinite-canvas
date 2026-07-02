@@ -616,13 +616,13 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
-    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, references, options));
+    const imageUrls = references.length ? await Promise.all(references.map(resolveAgnesReferenceImageUrl)) : [];
+    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, options));
     return (await Promise.all(requests)).flat();
 }
 
-async function requestAgnesImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], options?: RequestOptions) {
     const requestSize = resolveAgnesRequestSize(config);
-    const images = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
     const body: Record<string, unknown> = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
@@ -638,6 +638,32 @@ async function requestAgnesImagesOnce(config: AiConfig, prompt: string, referenc
         },
     );
     return parseImagePayload(response.data);
+}
+
+async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
+    const source = image.dataUrl || image.url || "";
+    if (isPublicHttpUrl(source)) return source;
+    const dataUrl = await imageToDataUrl(image);
+    if (!dataUrl) throw new Error("参考图内容已丢失，请重新选择参考图");
+    const response = await fetch(dataUrl);
+    if (!response.ok) throw new Error("读取参考图失败");
+    const blob = await response.blob();
+    const formData = new FormData();
+    formData.set("file", blob, image.name || "reference.png");
+    const upload = await fetch("/media-public-url", { method: "POST", body: formData });
+    const payload = (await upload.json().catch(() => null)) as { url?: string; msg?: string } | null;
+    if (!upload.ok || !payload?.url) throw new Error(payload?.msg || `上传 Agnes 参考图失败：${upload.status}`);
+    return payload.url;
+}
+
+function isPublicHttpUrl(value: string) {
+    if (!/^https?:\/\//i.test(value)) return false;
+    try {
+        const host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+        return !["localhost", "::1", "0.0.0.0"].includes(host) && !host.endsWith(".localhost") && !/^127\./.test(host) && !/^10\./.test(host) && !/^192\.168\./.test(host) && !/^169\.254\./.test(host) && !/^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+    } catch {
+        return false;
+    }
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
