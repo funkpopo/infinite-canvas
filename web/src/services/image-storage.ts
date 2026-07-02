@@ -18,14 +18,6 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    if (typeof input === "string" && isRemoteUrl(input)) {
-        try {
-            return await storeImageBlob(await fetchImageBlob(input));
-        } catch {
-            const meta = await readImageMeta(input);
-            return { url: input, storageKey: "", width: meta.width, height: meta.height, bytes: 0, mimeType: meta.mimeType };
-        }
-    }
     const blob = typeof input === "string" ? await fetchImageBlob(input) : input;
     return storeImageBlob(blob);
 }
@@ -118,16 +110,9 @@ function blobToDataUrl(blob: Blob) {
 }
 
 async function fetchImageBlob(url: string) {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`读取图片失败：${response.status}`);
-        return await normalizeImageBlob(await response.blob());
-    } catch (error) {
-        if (!isRemoteUrl(url)) throw error;
-        const response = await fetch(`/media-proxy?url=${encodeURIComponent(url)}`);
-        if (!response.ok) throw new Error(`读取远程图片失败：${response.status}`);
-        return normalizeImageBlob(await response.blob());
-    }
+    const response = await fetch(proxiedImageUrl(url));
+    if (!response.ok) throw new Error(`${isRemoteUrl(url) ? "读取远程图片失败" : "读取图片失败"}：${response.status}`);
+    return normalizeImageBlob(await response.blob());
 }
 
 function isRemoteUrl(value: string) {

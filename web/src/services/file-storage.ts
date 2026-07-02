@@ -9,7 +9,7 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = typeof input === "string" ? await fetchMediaBlob(input) : input;
     const storageKey = `${prefix}:${nanoid()}`;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
@@ -65,6 +65,16 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectMediaStorageKeys(child, keys)) : collectMediaStorageKeys(item, keys)));
     return keys;
+}
+
+export function proxiedMediaUrl(url: string) {
+    return /^https?:\/\//i.test(url) ? `/media-proxy?url=${encodeURIComponent(url)}` : url;
+}
+
+async function fetchMediaBlob(url: string) {
+    const response = await fetch(proxiedMediaUrl(url));
+    if (!response.ok) throw new Error(`读取媒体失败：${response.status}`);
+    return response.blob();
 }
 
 function readVideoMeta(url: string) {
