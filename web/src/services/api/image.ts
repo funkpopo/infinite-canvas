@@ -118,14 +118,6 @@ function normalizeQuality(quality: string) {
     return QUALITY_BASE[normalized] ? normalized : undefined;
 }
 
-function normalizeAgnesQuality(quality: string) {
-    const value = quality.trim().toLowerCase();
-    if (!value || value === "auto") return undefined;
-    const normalized = QUALITY_ALIASES[value] || value;
-    if (!QUALITY_BASE[normalized]) throw new Error("Agnes Image 质量参数不支持，请选择自动、低、中或高");
-    return normalized;
-}
-
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
 function resolveSize(quality: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
@@ -162,7 +154,7 @@ function parseImageRatio(value: string) {
 }
 
 function parseImageDimensions(value: string) {
-    const match = value.match(/^(\d+)x(\d+)$/i);
+    const match = value.match(/^(\d+)[x*×](\d+)$/i);
     if (!match) return null;
     return { width: Number(match[1]), height: Number(match[2]) };
 }
@@ -188,10 +180,10 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
-function resolveAgnesRequestSize(config: Pick<AiConfig, "quality" | "size">) {
+function resolveAgnesRequestSize(config: Pick<AiConfig, "size">) {
     const size = config.size.trim();
     if (!size || size.toLowerCase() === "auto") throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
-    const requestSize = resolveRequestSize(normalizeAgnesQuality(config.quality), size);
+    const requestSize = resolveRequestSize(undefined, size);
     if (!requestSize) throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
     return requestSize;
 }
