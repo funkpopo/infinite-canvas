@@ -193,31 +193,44 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
-        message.success("已加入参考图");
+        try {
+            const stored = await storeGeneratedImage(image);
+            setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            message.success("已加入参考图");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "图片内容已丢失，请重新生成");
+        }
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        addAsset({
-            kind: "image",
-            title: `生成结果 ${index + 1}`,
-            coverUrl: stored.url,
-            tags: [],
-            source: "生图工作台",
-            data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
-        });
-        message.success("已加入我的素材");
+        try {
+            const stored = await storeGeneratedImage(image);
+            addAsset({
+                kind: "image",
+                title: `生成结果 ${index + 1}`,
+                coverUrl: stored.url,
+                tags: [],
+                source: "生图工作台",
+                data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
+                metadata: { source: "image-page", prompt },
+            });
+            message.success("已加入我的素材");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "图片内容已丢失，请重新生成");
+        }
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            try {
+                const stored = await storeGeneratedImage(payload);
+                setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "图片内容已丢失，请重新选择素材");
+                return;
+            }
         } else {
             message.warning("生图工作台只能使用文本或图片素材");
         }
@@ -236,7 +249,7 @@ export default function ImagePage() {
 
     const deleteSelectedLogs = () => {
         const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -252,16 +265,22 @@ export default function ImagePage() {
 
     const refreshLogs = async () => setLogs(await readStoredLogs());
 
-    const previewGenerationLog = async (log: GenerationLog) => {
+    const previewGenerationLog = (log: GenerationLog) => {
+        applyGenerationLog(log, true);
+    };
+
+    const applyGenerationLog = (log: GenerationLog, closeLogs: boolean) => {
+        const images = log.images.filter((image) => image.dataUrl);
         setPreviewLog(log);
-        setLogsOpen(false);
+        if (closeLogs) setLogsOpen(false);
         setPrompt(log.prompt);
         setReferences(log.references || []);
         if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+        setResults(images.map((image) => ({ id: image.id, status: "success", image })));
+        if (closeLogs && !images.length) message.warning("这条记录的图片内容已丢失，请重新生成");
     };
 
     const buildRequestSnapshot = () => {
@@ -685,11 +704,12 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
+        const values: Array<{ key: string; log: GenerationLog }> = [];
+        await logStore.iterate<GenerationLog, void>((value, key) => {
+            values.push({ key, log: value });
         });
-        const logs = await Promise.all(values.map(normalizeLog));
+        const logs = await Promise.all(values.map((item) => normalizeLog(item.log)));
+        await Promise.all(logs.map((log, index) => logStore.setItem(values[index].key, serializeLog(log))));
         return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch {
         return [];
@@ -697,18 +717,8 @@ async function readStoredLogs() {
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
-    const references = await Promise.all(
-        (log.references || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.storageKey ? "" : item.dataUrl),
-        })),
-    );
-    const images = await Promise.all(
-        (log.images || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.storageKey ? "" : item.dataUrl),
-        })),
-    );
+    const references = await Promise.all((log.references || []).map(normalizeStoredReferenceImage));
+    const images = await Promise.all((log.images || []).map(normalizeStoredGeneratedImage));
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),
@@ -729,6 +739,45 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         images,
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
     };
+}
+
+async function storeGeneratedImage(image: Pick<GeneratedImage, "dataUrl" | "storageKey">) {
+    const dataUrl = await resolveStoredImageSource(image.storageKey, image.dataUrl);
+    if (!dataUrl) throw new Error("图片内容已丢失，请重新生成");
+    try {
+        return await uploadImage(dataUrl);
+    } catch {
+        throw new Error("图片内容已丢失，请重新生成");
+    }
+}
+
+async function normalizeStoredGeneratedImage(image: GeneratedImage): Promise<GeneratedImage> {
+    const dataUrl = await resolveStoredImageSource(image.storageKey, image.dataUrl);
+    if (!dataUrl) return { ...image, dataUrl: "" };
+    if (image.storageKey) return { ...image, dataUrl };
+    try {
+        const stored = await uploadImage(dataUrl);
+        return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+    } catch {
+        return { ...image, dataUrl: "" };
+    }
+}
+
+async function normalizeStoredReferenceImage(image: ReferenceImage): Promise<ReferenceImage> {
+    const dataUrl = await resolveStoredImageSource(image.storageKey, image.dataUrl);
+    if (!dataUrl) return { ...image, dataUrl: "" };
+    if (image.storageKey) return { ...image, dataUrl };
+    try {
+        const stored = await uploadImage(dataUrl);
+        return { ...image, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+    } catch {
+        return { ...image, dataUrl: "" };
+    }
+}
+
+async function resolveStoredImageSource(storageKey?: string, fallback = "") {
+    const stored = storageKey ? await resolveImageUrl(storageKey, "") : "";
+    return stored || fallback || "";
 }
 
 function serializeLog(log: GenerationLog): GenerationLog {
