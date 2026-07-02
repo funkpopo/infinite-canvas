@@ -111,12 +111,19 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
-const AGNES_DEFAULT_IMAGE_SIZE = "1024x1024";
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
     const normalized = QUALITY_ALIASES[value] || value;
     return QUALITY_BASE[normalized] ? normalized : undefined;
+}
+
+function normalizeAgnesQuality(quality: string) {
+    const value = quality.trim().toLowerCase();
+    if (!value || value === "auto") return undefined;
+    const normalized = QUALITY_ALIASES[value] || value;
+    if (!QUALITY_BASE[normalized]) throw new Error("Agnes Image 质量参数不支持，请选择自动、低、中或高");
+    return normalized;
 }
 
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
@@ -179,6 +186,14 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     }
     if (value.includes(":")) return resolveSize(quality, value);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
+}
+
+function resolveAgnesRequestSize(config: Pick<AiConfig, "quality" | "size">) {
+    const size = config.size.trim();
+    if (!size || size.toLowerCase() === "auto") throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
+    const requestSize = resolveRequestSize(normalizeAgnesQuality(config.quality), size);
+    if (!requestSize) throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
+    return requestSize;
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -614,17 +629,17 @@ async function requestAgnesImages(config: AiConfig, prompt: string, references: 
 }
 
 async function requestAgnesImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
-    const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size) || AGNES_DEFAULT_IMAGE_SIZE;
+    const requestSize = resolveAgnesRequestSize(config);
     const images = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
+    const body: Record<string, unknown> = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        size: requestSize,
+        ...(images.length ? { extra_body: { image: images, response_format: "b64_json" } } : { return_base64: true }),
+    };
     const response = await axios.post<ImageApiResponse>(
         aiApiUrl(config, "/images/generations"),
-        {
-            model: config.model,
-            prompt: withSystemPrompt(config, prompt),
-            size: requestSize,
-            ...(images.length ? { extra_body: { image: images, response_format: "b64_json" } } : { return_base64: true }),
-        },
+        body,
         {
             headers: aiHeaders(config, "application/json"),
             signal: options?.signal,
