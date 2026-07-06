@@ -125,7 +125,7 @@ Base URL 如果已经以 `/v1`、`/api/v3` 或 `/api/plan/v3` 结尾，系统不
 - 查看远程提示词源。
 - 触发读取内置远程提示词源。
 
-当前内置远程源包括多个 GPT Image / GPT-4o / Nano Banana Pro 相关提示词仓库，由 Next.js route 拉取并缓存在当前运行实例内存中。
+当前内置远程源包括多个 GPT Image / GPT-4o / Nano Banana Pro 相关提示词仓库，由浏览器前端直连拉取并缓存到 IndexedDB。
 
 ## 素材
 
@@ -146,7 +146,7 @@ Base URL 如果已经以 `/v1`、`/api/v3` 或 `/api/plan/v3` 结尾，系统不
 
 - 当前版本不需要账号登录，也不再提供后台管理页面。
 - 配置与用户偏好弹窗支持多个 OpenAI 兼容渠道、默认模型、生成偏好和 WebDAV 同步设置。
-- 第三方提示词和 WebDAV 可使用少量 Next.js route，AI 接口不经过项目后端代理。
+- 第三方提示词、WebDAV 和 AI 接口都由浏览器前端直连，不经过项目后端代理。
 
 ## 当前限制
 

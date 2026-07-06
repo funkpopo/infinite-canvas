@@ -1,5 +1,3 @@
-"use client";
-
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
@@ -120,7 +118,7 @@ function isRemoteUrl(value: string) {
 }
 
 function proxiedImageUrl(url: string) {
-    return isRemoteUrl(url) ? `/media-proxy?url=${encodeURIComponent(url)}` : url;
+    return url;
 }
 
 async function normalizeImageBlob(blob: Blob) {

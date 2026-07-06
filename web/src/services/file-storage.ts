@@ -1,5 +1,3 @@
-"use client";
-
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 
@@ -68,7 +66,7 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
 }
 
 export function proxiedMediaUrl(url: string) {
-    return /^https?:\/\//i.test(url) ? `/media-proxy?url=${encodeURIComponent(url)}` : url;
+    return url;
 }
 
 async function fetchMediaBlob(url: string) {

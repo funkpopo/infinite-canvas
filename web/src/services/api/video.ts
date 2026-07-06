@@ -3,6 +3,7 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, proxiedMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
+import { uploadTemporaryPublicMedia } from "@/services/temporary-media";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -402,12 +403,7 @@ async function resolveAgnesPublicImageUrl(image: ReferenceImage) {
     const response = await fetch(dataUrl);
     if (!response.ok) throw new Error("读取参考图失败");
     const blob = await response.blob();
-    const formData = new FormData();
-    formData.set("file", blob, image.name || "reference.png");
-    const upload = await fetch("/media-public-url", { method: "POST", body: formData });
-    const payload = (await upload.json().catch(() => null)) as { url?: string; msg?: string } | null;
-    if (!upload.ok || !payload?.url) throw new Error(payload?.msg || `上传 Agnes 参考图失败：${upload.status}`);
-    return payload.url;
+    return uploadTemporaryPublicMedia(blob, image.name || "reference.png");
 }
 
 function isPublicHttpUrl(value: string) {

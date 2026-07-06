@@ -1,5 +1,3 @@
-"use client";
-
 import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button, Card, Tag } from "antd";

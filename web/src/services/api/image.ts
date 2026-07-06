@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { uploadTemporaryPublicMedia } from "@/services/temporary-media";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -385,8 +386,9 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
     for (;;) {
         const match = state.buffer.match(/\r?\n\r?\n/);
         if (!match) break;
-        consumeResponseStreamBlock(state.buffer.slice(0, match.index), state, onDelta);
-        state.buffer = state.buffer.slice(match.index + match[0].length);
+        const index = match.index ?? 0;
+        consumeResponseStreamBlock(state.buffer.slice(0, index), state, onDelta);
+        state.buffer = state.buffer.slice(index + match[0].length);
     }
     if (flush && state.buffer.trim()) {
         consumeResponseStreamBlock(state.buffer, state, onDelta);
@@ -533,8 +535,9 @@ function consumeGeminiStreamText(state: GeminiStreamState, text: string, onDelta
     for (;;) {
         const match = state.buffer.match(/\r?\n\r?\n/);
         if (!match) break;
-        consumeGeminiStreamBlock(state.buffer.slice(0, match.index), state, onDelta);
-        state.buffer = state.buffer.slice(match.index + match[0].length);
+        const index = match.index ?? 0;
+        consumeGeminiStreamBlock(state.buffer.slice(0, index), state, onDelta);
+        state.buffer = state.buffer.slice(index + match[0].length);
     }
     if (flush && state.buffer.trim()) {
         consumeGeminiStreamBlock(state.buffer, state, onDelta);
@@ -648,12 +651,7 @@ async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
     const response = await fetch(dataUrl);
     if (!response.ok) throw new Error("读取参考图失败");
     const blob = await response.blob();
-    const formData = new FormData();
-    formData.set("file", blob, image.name || "reference.png");
-    const upload = await fetch("/media-public-url", { method: "POST", body: formData });
-    const payload = (await upload.json().catch(() => null)) as { url?: string; msg?: string } | null;
-    if (!upload.ok || !payload?.url) throw new Error(payload?.msg || `上传 Agnes 参考图失败：${upload.status}`);
-    return payload.url;
+    return uploadTemporaryPublicMedia(blob, image.name || "reference.png");
 }
 
 function isPublicHttpUrl(value: string) {
