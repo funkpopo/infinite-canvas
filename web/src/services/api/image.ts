@@ -5,7 +5,6 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { uploadTemporaryPublicMedia } from "@/services/temporary-media";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -619,17 +618,17 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const requestSize = resolveAgnesRequestSize(config);
     const imageUrls = references.length ? await Promise.all(references.map(resolveAgnesReferenceImageUrl)) : [];
-    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, options));
+    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, requestSize, options));
     return (await Promise.all(requests)).flat();
 }
 
-async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], options?: RequestOptions) {
-    const requestSize = resolveAgnesRequestSize(config);
+async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], size: string, options?: RequestOptions) {
     const body: Record<string, unknown> = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
-        size: requestSize,
+        size,
         ...(images.length ? { extra_body: { image: images, response_format: "b64_json" } } : { return_base64: true }),
     };
     const response = await axios.post<ImageApiResponse>(
@@ -648,10 +647,7 @@ async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
     if (isPublicHttpUrl(source)) return source;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图内容已丢失，请重新选择参考图");
-    const response = await fetch(dataUrl);
-    if (!response.ok) throw new Error("读取参考图失败");
-    const blob = await response.blob();
-    return uploadTemporaryPublicMedia(blob, image.name || "reference.png");
+    return dataUrl;
 }
 
 function isPublicHttpUrl(value: string) {
@@ -674,7 +670,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    if (requestConfig.imageApiMode === "agnes") {
+    if (requestConfig.apiFormat === "agnes") {
         try {
             return await requestAgnesImages(requestConfig, prompt, [], n, options);
         } catch (error) {
@@ -719,7 +715,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    if (requestConfig.imageApiMode === "agnes") {
+    if (requestConfig.apiFormat === "agnes") {
         if (mask) throw new Error("Agnes Image 暂不支持蒙版编辑");
         try {
             return await requestAgnesImages(requestConfig, requestPrompt, references, n, options);
@@ -756,6 +752,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    if (requestConfig.apiFormat === "agnes") throw new Error("AgnesAI 调用格式暂不支持文本对话，请使用 OpenAI 或 Gemini 格式渠道");
     try {
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "没有返回内容";
@@ -775,6 +772,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    if (requestConfig.apiFormat === "agnes") throw new Error("AgnesAI 调用格式暂不支持文本对话，请使用 OpenAI 或 Gemini 格式渠道");
     try {
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);

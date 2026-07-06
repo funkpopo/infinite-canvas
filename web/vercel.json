@@ -3,5 +3,8 @@
   "installCommand": "bun install",
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/agnes-outputs/:path*", "destination": "https://platform-outputs.agnes-ai.space/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

@@ -65,8 +65,18 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
+const MEDIA_PROXY_ROUTES: Record<string, string> = {
+    "platform-outputs.agnes-ai.space": "/agnes-outputs",
+};
+
 export function proxiedMediaUrl(url: string) {
-    return url;
+    try {
+        const parsed = new URL(url);
+        const prefix = MEDIA_PROXY_ROUTES[parsed.hostname];
+        return prefix ? `${prefix}${parsed.pathname}${parsed.search}` : url;
+    } catch {
+        return url;
+    }
 }
 
 async function fetchMediaBlob(url: string) {

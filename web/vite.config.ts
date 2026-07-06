@@ -17,6 +17,15 @@ export default defineConfig({
             "@": resolve(webDir, "src"),
         },
     },
+    server: {
+        proxy: {
+            "/agnes-outputs": {
+                target: "https://platform-outputs.agnes-ai.space",
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/agnes-outputs/, ""),
+            },
+        },
+    },
     define: {
         __APP_VERSION__: JSON.stringify(localVersion),
         __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),

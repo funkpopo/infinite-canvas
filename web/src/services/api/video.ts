@@ -3,7 +3,6 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, proxiedMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { uploadTemporaryPublicMedia } from "@/services/temporary-media";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -64,11 +63,11 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (requestConfig.apiFormat === "agnes") {
+        return createAgnesTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
-    }
-    if (requestConfig.videoApiMode === "agnes") {
-        return createAgnesTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考素材");
@@ -126,7 +125,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
 
 async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
-    const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesPublicImageUrl(image)));
+    const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesReferenceImageUrl(image)));
     const { width, height } = normalizeAgnesVideoSize(config.size, config.vquality);
     const payload = {
         model: modelOptionName(model),
@@ -320,20 +319,25 @@ function normalizeVideoResolution(value: string) {
 }
 
 function normalizeAgnesVideoSize(size: string, resolution: string) {
-    const normalized = normalizeVideoSize(size);
-    const custom = normalized.match(/^(\d+)x(\d+)$/);
-    if (custom && size !== "auto") return { width: Number(custom[1]), height: Number(custom[2]) };
     const normalizedResolution = normalizeVideoResolution(resolution);
     const longSide = normalizedResolution === "480p" ? 854 : normalizedResolution === "1080p" ? 1920 : 1280;
     const shortSide = normalizedResolution === "480p" ? 480 : normalizedResolution === "1080p" ? 1080 : 720;
-    const vertical = ["9:16", "2:3", "3:4", "720x1280", "1024x1792"].includes(size);
-    return vertical ? { width: shortSide, height: longSide } : { width: longSide, height: shortSide };
+    const ratio = size.match(/^(\d+):(\d+)$/);
+    if (ratio) {
+        const w = Number(ratio[1]);
+        const h = Number(ratio[2]);
+        const scaled = Math.round((shortSide * Math.max(w, h)) / Math.min(w, h) / 2) * 2;
+        return w >= h ? { width: scaled, height: shortSide } : { width: shortSide, height: scaled };
+    }
+    const custom = normalizeVideoSize(size)?.match(/^(\d+)x(\d+)$/);
+    if (custom) return { width: Number(custom[1]), height: Number(custom[2]) };
+    return { width: longSide, height: shortSide };
 }
 
 function normalizeAgnesNumFrames(value: string) {
     const seconds = Math.max(1, Math.min(18, Math.floor(Number(value) || 5)));
     const target = Math.min(441, Math.max(81, Math.round(seconds * 24)));
-    const n = Math.max(1, Math.floor((target - 1) / 8));
+    const n = Math.max(1, Math.round((target - 1) / 8));
     return n * 8 + 1;
 }
 
@@ -395,15 +399,13 @@ function isPublicMediaUrl(value: string) {
     return /^https?:\/\//i.test(value || "");
 }
 
-async function resolveAgnesPublicImageUrl(image: ReferenceImage) {
+async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
     if (isPublicHttpUrl(directUrl)) return directUrl;
     const dataUrl = await imageToDataUrl(image);
-    if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
-    const response = await fetch(dataUrl);
-    if (!response.ok) throw new Error("读取参考图失败");
-    const blob = await response.blob();
-    return uploadTemporaryPublicMedia(blob, image.name || "reference.png");
+    const base64 = dataUrl.match(/^data:[^;,]+;base64,(.+)$/)?.[1];
+    if (!base64) throw new Error("参考图读取失败，请换一张图片或重新上传");
+    return base64;
 }
 
 function isPublicHttpUrl(value: string) {
