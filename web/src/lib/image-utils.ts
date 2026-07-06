@@ -50,6 +50,39 @@ export function readImageMeta(dataUrl: string) {
     });
 }
 
+/** Capture the first frame of a video as a JPEG data URL; resolves "" when the frame can't be read. */
+export function captureVideoPoster(url: string, maxWidth = 640) {
+    return new Promise<string>((resolve) => {
+        const video = document.createElement("video");
+        let settled = false;
+        const finish = (poster: string) => {
+            if (settled) return;
+            settled = true;
+            video.removeAttribute("src");
+            video.load();
+            resolve(poster);
+        };
+        video.muted = true;
+        video.crossOrigin = "anonymous";
+        video.preload = "auto";
+        video.onerror = () => finish("");
+        video.onloadeddata = () => {
+            try {
+                const scale = Math.min(1, maxWidth / (video.videoWidth || maxWidth));
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.max(1, Math.round((video.videoWidth || maxWidth) * scale));
+                canvas.height = Math.max(1, Math.round((video.videoHeight || maxWidth) * scale));
+                canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                finish(canvas.toDataURL("image/jpeg", 0.8));
+            } catch {
+                finish("");
+            }
+        };
+        setTimeout(() => finish(""), 5000);
+        video.src = url;
+    });
+}
+
 export function dataUrlToFile(image: ReferenceImage) {
     const [header, content] = image.dataUrl.split(",", 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || image.type || "image/png";
