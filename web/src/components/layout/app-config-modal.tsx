@@ -7,7 +7,7 @@ import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_MODELS, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -98,11 +98,16 @@ export function AppConfigModal() {
 
     const updateChannelApiFormat = (channel: ModelChannel, apiFormat: ApiCallFormat) => {
         const baseUrl = !channel.baseUrl.trim() || channel.baseUrl.trim() === defaultBaseUrlForApiFormat(channel.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : channel.baseUrl;
-        updateChannel(channel.id, { apiFormat, baseUrl });
+        updateChannel(channel.id, { apiFormat, baseUrl, models: apiFormat === "agnes" && !channel.models.length ? AGNES_MODELS : channel.models });
     };
 
     const addChannel = () => {
         updateChannels([...config.channels, createModelChannel({ name: `渠道 ${config.channels.length + 1}` })]);
+    };
+
+    const addAgnesChannel = () => {
+        updateChannels([...config.channels, createModelChannel({ name: "AgnesAI", apiFormat: "agnes", baseUrl: defaultBaseUrlForApiFormat("agnes"), models: AGNES_MODELS })]);
+        setActiveTab("models");
     };
 
     const deleteChannel = (id: string) => {
@@ -246,6 +251,7 @@ export function AppConfigModal() {
                                         </div>
                                     </div>
                                     <div className="flex shrink-0 gap-2">
+                                        <Button onClick={addAgnesChannel}>添加 AgnesAI</Button>
                                         <Button icon={<RefreshCw className="size-4" />} loading={Boolean(loadingChannelId)} onClick={() => void refreshAllModels()}>
                                             拉取全部
                                         </Button>

@@ -33,6 +33,12 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoFrameRate: string;
+    videoInferenceSteps: string;
+    videoSeed: string;
+    videoNegativePrompt: string;
+    agnesVideoMode: string;
+    imageResponseFormat: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -59,6 +65,9 @@ const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
+export const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
+export const AGNES_VIDEO_MODEL = "agnes-video-v2.0";
+export const AGNES_MODELS = [AGNES_IMAGE_MODEL, AGNES_VIDEO_MODEL];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -84,10 +93,16 @@ export const defaultConfig: AiConfig = {
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
-    videoSeconds: "6",
+    videoSeconds: "5",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoFrameRate: "24",
+    videoInferenceSteps: "",
+    videoSeed: "",
+    videoNegativePrompt: "",
+    agnesVideoMode: "ti2vid",
+    imageResponseFormat: "b64_json",
     systemPrompt: "",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     imageModels: ["default::gpt-image-2"],
@@ -220,10 +235,16 @@ export const useConfigStore = create<ConfigStore>()(
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
                         audioInstructions: config.audioInstructions || "",
-                        videoSeconds: config.videoSeconds || "6",
+                        videoSeconds: config.videoSeconds || "5",
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
+                        videoFrameRate: config.videoFrameRate || "24",
+                        videoInferenceSteps: config.videoInferenceSteps || "",
+                        videoSeed: config.videoSeed || "",
+                        videoNegativePrompt: config.videoNegativePrompt || "",
+                        agnesVideoMode: config.agnesVideoMode || "ti2vid",
+                        imageResponseFormat: config.imageResponseFormat || "b64_json",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
                         videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),

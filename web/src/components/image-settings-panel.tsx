@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -28,9 +28,25 @@ const aspectOptions = [
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
+const agnesAspectOptions = [
+    { value: "1024x768", label: "标准", width: 1024, height: 768, icon: "landscape" },
+    { value: "768x1024", label: "竖图", width: 768, height: 1024, icon: "portrait" },
+    { value: "1024x1024", label: "方形", width: 1024, height: 1024, icon: "square" },
+    { value: "1536x1024", label: "宽图", width: 1536, height: 1024, icon: "landscape" },
+    { value: "1024x1536", label: "长图", width: 1024, height: 1536, icon: "portrait" },
+    { value: "2048x1152", label: "16:9", width: 2048, height: 1152, icon: "landscape" },
+    { value: "1152x2048", label: "9:16", width: 1152, height: 2048, icon: "portrait" },
+    { value: "1024x768", label: "4:3", width: 1024, height: 768, icon: "landscape" },
+];
+
+const agnesResponseFormatOptions = [
+    { value: "b64_json", label: "Base64" },
+    { value: "url", label: "URL" },
+];
+
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count" | "imageResponseFormat", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -40,6 +56,11 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
+
+    if (isAgnesImageConfig(config)) {
+        return <AgnesImageSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} maxCount={maxCount} quickCount={quickCount} />;
+    }
+
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
@@ -130,6 +151,83 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
+function AgnesImageSettingsPanel({ config, onConfigChange, theme, showTitle, className, maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+    const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const activeSize = config.size && config.size !== "auto" ? config.size : "1024x768";
+    const selectedAspect = agnesAspectOptions.find((item) => item.value === activeSize);
+    const dimensions = readSizeDimensions(activeSize, selectedAspect || agnesAspectOptions[0]);
+    const responseFormat = config.imageResponseFormat === "url" ? "url" : "b64_json";
+    const updateDimension = (key: "width" | "height", value: number | null) => {
+        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
+        const width = key === "width" ? next : dimensions.width;
+        const height = key === "height" ? next : dimensions.height;
+        onConfigChange("size", `${width}x${height}`);
+    };
+
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div
+                className={className}
+                style={{ color: theme.node.text }}
+                onMouseDown={(event) => {
+                    event.stopPropagation();
+                    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+                    if (document.activeElement instanceof HTMLElement && event.currentTarget.contains(document.activeElement)) document.activeElement.blur();
+                }}
+            >
+                {showTitle ? <div className="text-lg font-semibold">Agnes 图像设置</div> : null}
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>输出</SettingTitle>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {agnesResponseFormatOptions.map((item) => (
+                            <OptionPill key={item.value} selected={responseFormat === item.value} theme={theme} onClick={() => onConfigChange("imageResponseFormat", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                        <DimensionInput prefix="W" value={dimensions.width} disabled={false} theme={theme} alignToStep={false} onChange={(value) => updateDimension("width", value)} />
+                        <span className="text-lg opacity-45">↔</span>
+                        <DimensionInput prefix="H" value={dimensions.height} disabled={false} theme={theme} alignToStep={false} onChange={(value) => updateDimension("height", value)} />
+                    </div>
+                </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>预设</SettingTitle>
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {agnesAspectOptions.map((item, index) => (
+                            <button
+                                key={`${item.value}-${index}`}
+                                type="button"
+                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
+                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={() => onConfigChange("size", item.value)}
+                            >
+                                <AspectIcon type={item.icon} width={item.width} height={item.height} color={theme.node.text} />
+                                <span>{item.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {Array.from({ length: quickCount }, (_, index) => index + 1).map((value) => (
+                            <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
+                                {value} 张
+                            </OptionPill>
+                        ))}
+                        <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                    </div>
+                </div>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
 export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; children: ReactNode }) {
     return (
         <ConfigProvider
@@ -148,7 +246,15 @@ export function imageQualityLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
+    return [...agnesAspectOptions.map((item) => ({ ...item, size: item.value })), ...aspectOptions].find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
+}
+
+export function imageResponseFormatLabel(value: string) {
+    return value === "url" ? "URL" : "Base64";
+}
+
+function isAgnesImageConfig(config: AiConfig) {
+    return resolveModelRequestConfig(config, config.imageModel || config.model).apiFormat === "agnes";
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

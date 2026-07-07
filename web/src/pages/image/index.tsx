@@ -58,7 +58,7 @@ type GenerationLog = {
     thumbnails: string[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count" | "imageResponseFormat">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -277,6 +277,7 @@ export default function ImagePage() {
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
+        if (log.config.imageResponseFormat) updateConfig("imageResponseFormat", log.config.imageResponseFormat);
         setResults(images.map((image) => ({ id: image.id, status: "success", image })));
         if (closeLogs && !images.length) message.warning("这条记录的图片内容已丢失，请重新生成");
     };
@@ -794,6 +795,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         quality: log.config?.quality || log.quality || "",
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
+        imageResponseFormat: log.config?.imageResponseFormat || "b64_json",
     };
 }
 
@@ -842,6 +844,7 @@ function buildLog({
         quality: config.quality,
         size: config.size,
         count: config.count,
+        imageResponseFormat: config.imageResponseFormat,
     };
     return {
         id: nanoid(),

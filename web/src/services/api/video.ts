@@ -31,7 +31,7 @@ type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes"; model: string; agnesVideoId?: string; agnesTaskId?: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -127,22 +127,34 @@ async function createAgnesTask(config: AiConfig, model: string, prompt: string, 
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
     const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesReferenceImageUrl(image)));
     const { width, height } = normalizeAgnesVideoSize(config.size, config.vquality);
+    const frameRate = normalizeAgnesFrameRate(config.videoFrameRate);
+    const keyframes = images.length > 1 || normalizeAgnesVideoMode(config.agnesVideoMode) === "keyframes";
+    if (keyframes && images.length < 2) throw new Error("Agnes Video 关键帧模式至少需要 2 张参考图");
+    const extra_body = keyframes ? { image: images, mode: "keyframes" } : undefined;
+    const negativePrompt = config.videoNegativePrompt.trim();
+    const inferenceSteps = normalizeOptionalPositiveInt(config.videoInferenceSteps);
+    const seed = normalizeOptionalInteger(config.videoSeed);
     const payload = {
         model: modelOptionName(model),
         prompt,
+        ...(keyframes ? {} : { mode: "ti2vid" }),
         width,
         height,
-        num_frames: normalizeAgnesNumFrames(config.videoSeconds),
-        frame_rate: 24,
-        ...(images.length === 1 ? { image: images[0] } : {}),
-        ...(images.length > 1 ? { extra_body: { image: images } } : {}),
+        num_frames: normalizeAgnesNumFrames(config.videoSeconds, frameRate),
+        frame_rate: frameRate,
+        ...(typeof inferenceSteps === "number" ? { num_inference_steps: inferenceSteps } : {}),
+        ...(typeof seed === "number" ? { seed } : {}),
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+        ...(!keyframes && images.length === 1 ? { image: images[0] } : {}),
+        ...(extra_body ? { extra_body } : {}),
     };
 
     try {
         const created = unwrapAgnesTask((await axios.post<ApiEnvelope<AgnesVideoTask>>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
-        const id = created.video_id || created.id || created.task_id;
+        const taskId = created.task_id || created.id;
+        const id = created.video_id || taskId;
         if (!id) throw new Error("Agnes Video 接口没有返回任务 ID");
-        return { id, provider: "agnes", model };
+        return { id, provider: "agnes", model, agnesVideoId: created.video_id, agnesTaskId: taskId };
     } catch (error) {
         throw new Error(readAxiosError(error, "Agnes Video 任务创建失败"));
     }
@@ -150,7 +162,7 @@ async function createAgnesTask(config: AiConfig, model: string, prompt: string, 
 
 async function pollAgnesTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const state = unwrapAgnesTask((await axios.get<ApiEnvelope<AgnesVideoTask>>(agnesVideoResultUrl(config, task.id, task.model), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const state = unwrapAgnesTask((await axios.get<ApiEnvelope<AgnesVideoTask>>(agnesVideoResultUrl(config, task), { headers: aiHeaders(config), signal: options?.signal })).data);
         if (state.status === "completed" || state.status === "succeeded") {
             const url = readAgnesVideoUrl(state);
             if (!url) return { status: "failed", error: "Agnes Video 任务成功但没有返回视频 URL" };
@@ -231,7 +243,15 @@ function seedanceApiUrl(config: AiConfig, taskId?: string) {
     return buildApiUrl(config.baseUrl, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
 }
 
-function agnesVideoResultUrl(config: AiConfig, videoId: string, model: string) {
+function agnesVideoResultUrl(config: AiConfig, task: VideoGenerationTask) {
+    if (task.agnesVideoId) return agnesVideoIdResultUrl(config, task.agnesVideoId, task.model);
+    if (task.agnesTaskId) return aiApiUrl(config, `/videos/${encodeURIComponent(task.agnesTaskId)}`);
+    if (task.id.startsWith("video_")) return agnesVideoIdResultUrl(config, task.id, task.model);
+    if (task.id.startsWith("task_")) return aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`);
+    throw new Error("Agnes Video 历史任务缺少 video_id 或 task_id，无法确定查询路径");
+}
+
+function agnesVideoIdResultUrl(config: AiConfig, videoId: string, model: string) {
     const baseUrl = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
     const url = new URL(`${baseUrl}/agnesapi`);
     url.searchParams.set("video_id", videoId);
@@ -319,9 +339,10 @@ function normalizeVideoResolution(value: string) {
 }
 
 function normalizeAgnesVideoSize(size: string, resolution: string) {
+    if (!size || size === "auto" || size === "1:1") return { width: 1152, height: 768 };
     const normalizedResolution = normalizeVideoResolution(resolution);
-    const longSide = normalizedResolution === "480p" ? 854 : normalizedResolution === "1080p" ? 1920 : 1280;
-    const shortSide = normalizedResolution === "480p" ? 480 : normalizedResolution === "1080p" ? 1080 : 720;
+    const longSide = normalizedResolution === "480p" ? 720 : normalizedResolution === "1080p" ? 1536 : 1152;
+    const shortSide = normalizedResolution === "480p" ? 480 : normalizedResolution === "1080p" ? 1024 : 768;
     const ratio = size.match(/^(\d+):(\d+)$/);
     if (ratio) {
         const w = Number(ratio[1]);
@@ -334,11 +355,36 @@ function normalizeAgnesVideoSize(size: string, resolution: string) {
     return { width: longSide, height: shortSide };
 }
 
-function normalizeAgnesNumFrames(value: string) {
-    const seconds = Math.max(1, Math.min(18, Math.floor(Number(value) || 5)));
-    const target = Math.min(441, Math.max(81, Math.round(seconds * 24)));
+function normalizeAgnesNumFrames(value: string, frameRate: number) {
+    const seconds = Math.max(1, Math.min(18, Number(value) || 5));
+    const target = Math.min(441, Math.max(81, Math.round(seconds * frameRate)));
     const n = Math.max(1, Math.round((target - 1) / 8));
     return n * 8 + 1;
+}
+
+function normalizeAgnesFrameRate(value: string) {
+    const frameRate = Number(value) || 24;
+    return Math.max(1, Math.min(60, Math.round(frameRate * 100) / 100));
+}
+
+function normalizeAgnesVideoMode(value: string) {
+    return value === "keyframes" ? "keyframes" : "ti2vid";
+}
+
+function normalizeOptionalPositiveInt(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const number = Math.floor(Number(trimmed));
+    if (!Number.isFinite(number) || number < 1) throw new Error("Agnes Video 推理步数必须是大于 0 的整数");
+    return number;
+}
+
+function normalizeOptionalInteger(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const number = Math.floor(Number(trimmed));
+    if (!Number.isFinite(number)) throw new Error("Agnes Video seed 必须是整数");
+    return number;
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {
@@ -403,9 +449,8 @@ async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
     if (isPublicHttpUrl(directUrl)) return directUrl;
     const dataUrl = await imageToDataUrl(image);
-    const base64 = dataUrl.match(/^data:[^;,]+;base64,(.+)$/)?.[1];
-    if (!base64) throw new Error("参考图读取失败，请换一张图片或重新上传");
-    return base64;
+    if (!dataUrl.startsWith("data:image/")) throw new Error("参考图读取失败，请换一张图片或重新上传");
+    return dataUrl;
 }
 
 function isPublicHttpUrl(value: string) {

@@ -8,13 +8,13 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Codex App 插件文档：新增插件安装教程，区分 AI 自动安装、手动安装和本仓库开发调试安装；同步优化插件 README 与技能说明。
 - Docker 构建：为画布列表页和画布详情页补充 Suspense 边界，避免 Next.js 生产构建在预渲染 `/canvas` 时因 `useSearchParams()` 失败。
 - 配置与用户偏好：每个模型渠道新增 OpenAI / Gemini 调用格式选择，默认 OpenAI，切换默认格式时同步更新默认 Base URL；渠道 Tab 增加紧凑醒目的提醒，说明模型是否可选需要到“模型”Tab 选择。
-- Agnes Image 兼容：渠道调用格式新增 AgnesAI（默认 Base URL `https://apihub.agnes-ai.com`），与 OpenAI / Gemini 渠道彻底分离，不再有单独的图片 API 类型开关；AgnesAI 渠道生图走 Agnes Image 文生图和图生图请求格式，不发送 OpenAI Images 顶层 `response_format`，图生图用 `/images/generations` 与 `extra_body.image`；参考图公网 URL 原样传入，本地图片直接使用 Data URI Base64，不经第三方临时图床中转；尺寸和宽高比统一解析成明确 `WxH`，比例尺寸按工作台显示的短边 1024 计算，`auto` 尺寸不再静默改成默认值；AgnesAI 渠道的文本对话和音频生成会给出明确不支持提示。
+- Agnes Image 兼容：渠道调用格式新增 AgnesAI（默认 Base URL `https://apihub.agnes-ai.com`），与 OpenAI / Gemini 渠道彻底分离，不再有单独的图片 API 类型开关；AgnesAI 渠道生图走 Agnes Image 文生图和图生图请求格式，不发送 OpenAI Images 顶层 `response_format`，图生图用 `/images/generations` 与 `extra_body.image`；参考图公网 URL 原样传入，本地图片使用 Data URI Base64；Agnes 专属图像设置不再显示 `auto` 与 16 倍数对齐开关，尺寸只按 Agnes 文档要求校验正整数，比例尺寸按短边 1024 展开；新增 URL / Base64 输出选择，URL 输出使用 `extra_body.response_format: "url"`，Base64 输出使用 `b64_json` / `return_base64`；AgnesAI 渠道的文本对话和音频生成会给出明确不支持提示。
 - 远程媒体入库：Agnes 生成结果域名（`platform-outputs.agnes-ai.space`）不返回 CORS 头，前端改经同源路径 `/agnes-outputs/` 拉取落库；开发环境由 Vite `server.proxy` 转发，Docker 由 nginx 反代，Vercel 由 rewrite 转发，其他域名仍直连并保留失败回退。
 - 视频素材封面：视频创作台和画布视频节点保存到我的素材时，自动截取视频首帧作为封面（JPEG Data URL，宽度不超过 640px），截帧失败时保持无封面不阻断保存。
 - 参考图显示：生图和视频工作台的参考图缩略图会先解析本地 `storageKey`，远程图片 URL 会改用同源媒体代理展示，避免只显示图片名称。
 - 图片存储修复：读取本地图片 Blob 和媒体代理响应时会按文件头修正 PNG/JPEG/GIF/WebP 的 MIME，避免旧记录因 `text/html` 类型的图片 Blob 导致预览和参考图无法显示。
 - 生图结果持久化：生图工作台单张图片返回后立即落到本地图片存储，生成记录和画布节点不再复用已失效的 `blob:` 地址。
-- Agnes Video 兼容：AgnesAI 调用格式的视频生成走 Agnes Video 创建任务、按 `video_id` 查询结果，渠道格式判定优先于 Seedance 模型名判定，历史任务轮询使用 Agnes 任务间隔；图生视频参考图从本地以裸 Base64（不带 Data URI 前缀，Agnes 视频后端会整串解码）传入 `image` / `extra_body.image`，公网 URL 原样传入，不再上传第三方临时图床（图床 URL 曾因 Agnes 服务端下载超时导致 400）；`auto` 尺寸按清晰度档位映射成默认宽高；比例尺寸（如 1:1、3:4）按清晰度档位换算成等比宽高传入；`num_frames` 四舍五入到最接近的 `8n+1` 帧（5 秒对应 121 帧）。
+- Agnes Video 兼容：AgnesAI 调用格式的视频生成走 Agnes Video 创建任务，创建响应同时记录 `video_id` 与 `task_id`；轮询时有 `video_id` 就查 `/agnesapi`，只有 `task_id` 就查 `/v1/videos/<TASK_ID>`，不再把任务 ID 当作视频 ID；多张参考图按关键帧动画提交 `extra_body.image` 和 `extra_body.mode: "keyframes"`，单张参考图使用顶层 `image`；本地参考图改为 Data URI，公网 URL 原样传入；新增 Agnes 专属视频设置，支持普通 / 关键帧模式、1152x768 推荐尺寸、3/5/10/18 秒、24/30 fps、自定义帧率、反向提示词、seed 和推理步数；`num_frames` 按当前时长与帧率换算并四舍五入到最接近的 `8n+1` 帧。
 - Gemini 调用格式：支持拉取 Gemini 模型列表，并用于文本问答、在线 Agent 工具调用、基础生图和图生图请求。
 - 音频和视频生成：选择 Gemini 调用格式时先给出不支持提示，仍需使用 OpenAI 兼容渠道。
 - WebDAV 同步：移除 Next.js 转发代理和连接方式选择，改为浏览器前端直接连接 WebDAV 服务。

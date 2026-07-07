@@ -61,7 +61,7 @@ type GenerationLog = {
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoFrameRate" | "videoInferenceSteps" | "videoSeed" | "videoNegativePrompt" | "agnesVideoMode">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -342,6 +342,11 @@ export default function VideoPage() {
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
+        if (log.config.videoFrameRate) updateConfig("videoFrameRate", log.config.videoFrameRate);
+        updateConfig("videoInferenceSteps", log.config.videoInferenceSteps || "");
+        updateConfig("videoSeed", log.config.videoSeed || "");
+        updateConfig("videoNegativePrompt", log.config.videoNegativePrompt || "");
+        if (log.config.agnesVideoMode) updateConfig("agnesVideoMode", log.config.agnesVideoMode);
         setResults(log.status === "生成中" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || "生成失败" }]);
     };
 
@@ -784,6 +789,11 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
         videoGenerateAudio: log.config?.videoGenerateAudio || "true",
         videoWatermark: log.config?.videoWatermark || "false",
+        videoFrameRate: log.config?.videoFrameRate || "24",
+        videoInferenceSteps: log.config?.videoInferenceSteps || "",
+        videoSeed: log.config?.videoSeed || "",
+        videoNegativePrompt: log.config?.videoNegativePrompt || "",
+        agnesVideoMode: log.config?.agnesVideoMode || "ti2vid",
     };
 }
 
@@ -796,6 +806,11 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
         videoSeconds: config.videoSeconds,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
+        videoFrameRate: config.videoFrameRate,
+        videoInferenceSteps: config.videoInferenceSteps,
+        videoSeed: config.videoSeed,
+        videoNegativePrompt: config.videoNegativePrompt,
+        agnesVideoMode: config.agnesVideoMode,
     };
     return {
         id: nanoid(),
@@ -830,6 +845,11 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         vquality: normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
+        videoFrameRate: normalizeVideoFrameRate(config.videoFrameRate),
+        videoInferenceSteps: normalizeOptionalIntegerText(config.videoInferenceSteps),
+        videoSeed: normalizeOptionalIntegerText(config.videoSeed),
+        videoNegativePrompt: config.videoNegativePrompt,
+        agnesVideoMode: config.agnesVideoMode === "keyframes" ? "keyframes" : "ti2vid",
     };
 }
 
@@ -845,6 +865,18 @@ function normalizeVideoSize(value: string) {
 
 function normalizeResolution(value: string) {
     return normalizeVideoResolutionValue(value);
+}
+
+function normalizeVideoFrameRate(value: string) {
+    const frameRate = Number(value) || 24;
+    return String(Math.max(1, Math.min(60, Math.round(frameRate * 100) / 100)));
+}
+
+function normalizeOptionalIntegerText(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const number = Math.floor(Number(trimmed));
+    return Number.isFinite(number) ? String(number) : "";
 }
 
 function delay(ms: number) {

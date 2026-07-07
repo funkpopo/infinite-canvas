@@ -183,9 +183,13 @@ function resolveRequestSize(quality: string | undefined, size: string) {
 function resolveAgnesRequestSize(config: Pick<AiConfig, "size">) {
     const size = config.size.trim();
     if (!size || size.toLowerCase() === "auto") throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
-    const requestSize = resolveRequestSize(undefined, size);
-    if (!requestSize) throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
-    return requestSize;
+    const dimensions = parseImageDimensions(size);
+    if (dimensions) {
+        validateAgnesImageSize(dimensions.width, dimensions.height);
+        return `${dimensions.width}x${dimensions.height}`;
+    }
+    if (size.includes(":")) return resolveAgnesRatioSize(size);
+    throw new Error("Agnes Image 尺寸格式不支持，请使用 1024x768 或 4:3");
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -620,16 +624,21 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const requestSize = resolveAgnesRequestSize(config);
     const imageUrls = references.length ? await Promise.all(references.map(resolveAgnesReferenceImageUrl)) : [];
-    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, requestSize, options));
+    const responseFormat = normalizeAgnesImageResponseFormat(config.imageResponseFormat);
+    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, requestSize, responseFormat, options));
     return (await Promise.all(requests)).flat();
 }
 
-async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], size: string, options?: RequestOptions) {
+async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], size: string, responseFormat: "url" | "b64_json", options?: RequestOptions) {
+    const extra_body = {
+        ...(images.length ? { image: images } : {}),
+        response_format: responseFormat,
+    };
     const body: Record<string, unknown> = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
         size,
-        ...(images.length ? { extra_body: { image: images, response_format: "b64_json" } } : { return_base64: true }),
+        ...(images.length || responseFormat === "url" ? { extra_body } : { return_base64: true }),
     };
     const response = await axios.post<ImageApiResponse>(
         aiApiUrl(config, "/images/generations"),
@@ -640,6 +649,35 @@ async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: 
         },
     );
     return parseImagePayload(response.data);
+}
+
+function validateAgnesImageSize(width: number, height: number) {
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("Agnes Image 尺寸必须是正整数，例如 1024x768");
+}
+
+function resolveAgnesRatioSize(value: string) {
+    const ratio = parseAgnesImageRatio(value);
+    const isLandscape = ratio.width >= ratio.height;
+    const longRatio = isLandscape ? ratio.width / ratio.height : ratio.height / ratio.width;
+    const shortSide = 1024;
+    const longSide = Math.round(shortSide * longRatio);
+    const width = isLandscape ? longSide : shortSide;
+    const height = isLandscape ? shortSide : longSide;
+    validateAgnesImageSize(width, height);
+    return `${width}x${height}`;
+}
+
+function normalizeAgnesImageResponseFormat(value: string): "url" | "b64_json" {
+    return value === "url" ? "url" : "b64_json";
+}
+
+function parseAgnesImageRatio(value: string) {
+    const parts = value.split(":");
+    if (parts.length !== 2) throw new Error("Agnes Image 比例格式不支持，请使用 4:3");
+    const width = Number(parts[0]);
+    const height = Number(parts[1]);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) throw new Error("Agnes Image 比例必须是正数，例如 4:3");
+    return { width, height };
 }
 
 async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
