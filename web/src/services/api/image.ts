@@ -90,6 +90,11 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
+type ChatCompletionMessage = AiTextMessage | { role: "assistant"; content: string; tool_calls: ResponseToolCall[] } | { role: "tool"; tool_call_id: string; content: string };
+type ChatToolCallDelta = { index?: number; id?: string; function?: { name?: string; arguments?: string } };
+type ChatCompletionChoice = { delta?: { content?: string | null; tool_calls?: ChatToolCallDelta[] }; message?: { content?: string | null; tool_calls?: ChatToolCallDelta[] } };
+type ChatCompletionPayload = { choices?: ChatCompletionChoice[]; error?: { message?: string }; code?: number; msg?: string };
+type ChatStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 const QUALITY_BASE: Record<string, number> = {
@@ -586,6 +591,137 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
     return { content, toolCalls };
 }
 
+/** AgnesAI 等 OpenAI chat/completions 兼容渠道的流式客户端。 */
+async function requestChatStreamingResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify({
+            model: config.model,
+            messages: toChatMessages(withSystemMessage(config, messages)),
+            ...(tools.length ? { tools, tool_choice: toChatToolChoice(toolChoice) } : {}),
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, "请求失败"));
+    if (!response.body || (response.headers.get("content-type") || "").includes("application/json")) {
+        const payload = (await response.json()) as ChatCompletionPayload;
+        validateChatPayload(payload);
+        return parseChatCompletionPayload(payload);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state: ChatStreamState = { buffer: "", text: "", toolCalls: [] };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consumeChatStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        if (state.error) throw new Error(state.error);
+    }
+    consumeChatStreamText(state, decoder.decode(), onDelta, true);
+    if (state.error) throw new Error(state.error);
+    return { content: state.text, toolCalls: finalizeChatToolCalls(state.toolCalls) };
+}
+
+/** 把 Responses 风格的消息转成 chat/completions 消息，连续的 function_call 合并进同一条 assistant 消息。 */
+function toChatMessages(messages: ResponseInputMessage[]): ChatCompletionMessage[] {
+    return messages.reduce<ChatCompletionMessage[]>((result, message) => {
+        if ("type" in message) {
+            const toolCall: ResponseToolCall = { id: message.call_id, type: "function", function: { name: message.name, arguments: message.arguments } };
+            const last = result[result.length - 1];
+            if (last && "tool_calls" in last) last.tool_calls.push(toolCall);
+            else result.push({ role: "assistant", content: "", tool_calls: [toolCall] });
+        } else {
+            result.push(message);
+        }
+        return result;
+    }, []);
+}
+
+function toChatToolChoice(toolChoice: ToolChoice) {
+    return typeof toolChoice === "object" ? { type: "function" as const, function: { name: toolChoice.name } } : toolChoice;
+}
+
+function consumeChatStreamText(state: ChatStreamState, text: string, onDelta?: (text: string) => void, flush = false) {
+    state.buffer += text;
+    for (;;) {
+        const match = state.buffer.match(/\r?\n\r?\n/);
+        if (!match) break;
+        const index = match.index ?? 0;
+        consumeChatStreamBlock(state.buffer.slice(0, index), state, onDelta);
+        state.buffer = state.buffer.slice(index + match[0].length);
+    }
+    if (flush && state.buffer.trim()) {
+        consumeChatStreamBlock(state.buffer, state, onDelta);
+        state.buffer = "";
+    }
+}
+
+function consumeChatStreamBlock(block: string, state: ChatStreamState, onDelta?: (text: string) => void) {
+    const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).replace(/^ /, ""))
+        .join("\n")
+        .trim();
+    if (!data || data === "[DONE]") return;
+    const payload = JSON.parse(data) as ChatCompletionPayload;
+    const errorMessage = chatErrorMessage(payload);
+    if (errorMessage) state.error = errorMessage;
+    for (const choice of payload.choices || []) {
+        const part = choice.delta || choice.message || {};
+        if (typeof part.content === "string" && part.content) {
+            state.text += part.content;
+            onDelta?.(state.text);
+        }
+        (part.tool_calls || []).forEach((delta, position) => mergeChatToolCallDelta(state.toolCalls, delta, position));
+    }
+}
+
+/** 按 delta.index 增量合并 tool_calls：id/name 首次出现时落位，arguments 分片追加。 */
+function mergeChatToolCallDelta(toolCalls: ResponseToolCall[], delta: ChatToolCallDelta, position: number) {
+    const index = resolveChatToolCallIndex(toolCalls, delta, position);
+    const current = (toolCalls[index] ||= { id: "", type: "function", function: { name: "", arguments: "" } });
+    if (delta.id && !current.id) current.id = delta.id;
+    const name = delta.function?.name || "";
+    if (name && name !== current.function.name) current.function.name += name;
+    if (delta.function?.arguments) current.function.arguments += delta.function.arguments;
+}
+
+function resolveChatToolCallIndex(toolCalls: ResponseToolCall[], delta: ChatToolCallDelta, position: number) {
+    if (typeof delta.index === "number" && delta.index >= 0) return delta.index;
+    if (delta.id) {
+        const matched = toolCalls.findIndex((call) => call.id === delta.id);
+        return matched >= 0 ? matched : toolCalls.length;
+    }
+    return toolCalls.length ? toolCalls.length - 1 : position;
+}
+
+function finalizeChatToolCalls(toolCalls: ResponseToolCall[]) {
+    return toolCalls
+        .filter((call) => Boolean(call?.function.name))
+        .map((call) => ({ ...call, id: call.id || nanoid(), function: { ...call.function, arguments: call.function.arguments || "{}" } }));
+}
+
+function parseChatCompletionPayload(payload: ChatCompletionPayload): ToolResponseResult {
+    const message = payload.choices?.[0]?.message || payload.choices?.[0]?.delta;
+    const toolCalls: ResponseToolCall[] = [];
+    (message?.tool_calls || []).forEach((delta, position) => mergeChatToolCallDelta(toolCalls, delta, position));
+    return { content: typeof message?.content === "string" ? message.content : "", toolCalls: finalizeChatToolCalls(toolCalls) };
+}
+
+function chatErrorMessage(payload: ChatCompletionPayload) {
+    if (typeof payload.code === "number" && payload.code !== 0) return payload.msg || "请求失败";
+    return stringValue(payload.error?.message);
+}
+
+function validateChatPayload(payload: ChatCompletionPayload) {
+    const errorMessage = chatErrorMessage(payload);
+    if (errorMessage) throw new Error(errorMessage);
+}
+
 async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, options));
     return (await Promise.all(requests)).flat();
@@ -792,8 +928,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    if (requestConfig.apiFormat === "agnes") throw new Error("AgnesAI 调用格式暂不支持文本对话，请使用 OpenAI 或 Gemini 格式渠道");
     try {
+        if (requestConfig.apiFormat === "agnes") {
+            const answer = (await requestChatStreamingResponse(requestConfig, messages, [], "auto", onDelta, options)).content || "没有返回内容";
+            if (answer === "没有返回内容") onDelta(answer);
+            return answer;
+        }
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "没有返回内容";
             if (answer === "没有返回内容") onDelta(answer);
@@ -812,8 +952,10 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    if (requestConfig.apiFormat === "agnes") throw new Error("AgnesAI 调用格式暂不支持文本对话，请使用 OpenAI 或 Gemini 格式渠道");
     try {
+        if (requestConfig.apiFormat === "agnes") {
+            return await requestChatStreamingResponse(requestConfig, messages, tools, toolChoice, onDelta, options);
+        }
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
         }

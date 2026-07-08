@@ -157,7 +157,7 @@ export function AppConfigModal() {
     const updateCapabilityModels = (group: ModelGroup, models: string[]) => {
         const normalized = uniqueModels(models.map((model) => normalizeModelOptionValue(model, config.channels)).filter(Boolean));
         const next = normalized.filter((model) => channelSupportsCapability(config.channels, model, group.capability));
-        if (next.length < normalized.length) message.warning("AgnesAI 渠道仅支持生图和视频模型，已自动移除不支持的选项");
+        if (next.length < normalized.length) message.warning("AgnesAI 渠道暂不支持音频模型，已自动移除不支持的选项");
         updateConfig(group.modelsKey, next);
         if (!next.includes(config[group.modelKey])) updateConfig(group.modelKey, next[0] || "");
     };

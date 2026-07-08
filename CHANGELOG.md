@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [新增] AgnesAI 渠道支持 agnes-2.0-flash 文本模型，参与画布问答和在线 Agent。
 + [新增] 新增Codex App插件支持。
 + [修复] 修复前端 TypeScript 构建报错。
 + [调整] Docker 运行镜像改为 nginx 静态托管。

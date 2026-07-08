@@ -5,10 +5,11 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- Agnes LLM 兼容：新增 OpenAI `chat/completions` 客户端路径（SSE 流式解析 + `tool_calls` 增量合并，连续 `function_call` 合并进同一条 assistant 消息），AgnesAI 渠道的 `agnes-2.0-flash` 可选为文本模型，参与画布问答（文本节点生成/流式回答）和网页在线 Agent 工具调用循环；新建 AgnesAI 渠道默认模型列表包含 `agnes-2.0-flash`，音频仍不支持。
 - Codex App 插件文档：新增插件安装教程，区分 AI 自动安装、手动安装和本仓库开发调试安装；同步优化插件 README 与技能说明。
 - Docker 构建：为画布列表页和画布详情页补充 Suspense 边界，避免 Next.js 生产构建在预渲染 `/canvas` 时因 `useSearchParams()` 失败。
 - 配置与用户偏好：每个模型渠道新增 OpenAI / Gemini 调用格式选择，默认 OpenAI，切换默认格式时同步更新默认 Base URL；渠道 Tab 增加紧凑醒目的提醒，说明模型是否可选需要到“模型”Tab 选择。
-- Agnes Image 兼容：渠道调用格式新增 AgnesAI（默认 Base URL `https://apihub.agnes-ai.com`），与 OpenAI / Gemini 渠道彻底分离，不再有单独的图片 API 类型开关；AgnesAI 渠道生图走 Agnes Image 文生图和图生图请求格式，不发送 OpenAI Images 顶层 `response_format`，图生图用 `/images/generations` 与 `extra_body.image`；参考图公网 URL 原样传入，本地图片使用 Data URI Base64；Agnes 专属图像设置不再显示 `auto` 与 16 倍数对齐开关，尺寸只按 Agnes 文档要求校验正整数，比例尺寸按短边 1024 展开；新增 URL / Base64 输出选择，URL 输出使用 `extra_body.response_format: "url"`，Base64 输出使用 `b64_json` / `return_base64`；AgnesAI 渠道的文本对话和音频生成会给出明确不支持提示。
+- Agnes Image 兼容：渠道调用格式新增 AgnesAI（默认 Base URL `https://apihub.agnes-ai.com`），与 OpenAI / Gemini 渠道彻底分离，不再有单独的图片 API 类型开关；AgnesAI 渠道生图走 Agnes Image 文生图和图生图请求格式，不发送 OpenAI Images 顶层 `response_format`，图生图用 `/images/generations` 与 `extra_body.image`；参考图公网 URL 原样传入，本地图片使用 Data URI Base64；Agnes 专属图像设置不再显示 `auto` 与 16 倍数对齐开关，尺寸只按 Agnes 文档要求校验正整数，比例尺寸按短边 1024 展开；新增 URL / Base64 输出选择，URL 输出使用 `extra_body.response_format: "url"`，Base64 输出使用 `b64_json` / `return_base64`；AgnesAI 渠道的音频生成会给出明确不支持提示。
 - 远程媒体入库：Agnes 生成结果域名（`platform-outputs.agnes-ai.space`）不返回 CORS 头，前端改经同源路径 `/agnes-outputs/` 拉取落库；开发环境由 Vite `server.proxy` 转发，Docker 由 nginx 反代，Vercel 由 rewrite 转发，其他域名仍直连并保留失败回退。
 - 视频素材封面：视频创作台和画布视频节点保存到我的素材时，自动截取视频首帧作为封面（JPEG Data URL，宽度不超过 640px），截帧失败时保持无封面不阻断保存。
 - 参考图显示：生图和视频工作台的参考图缩略图会先解析本地 `storageKey`，远程图片 URL 会改用同源媒体代理展示，避免只显示图片名称。

@@ -67,7 +67,8 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
 export const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
 export const AGNES_VIDEO_MODEL = "agnes-video-v2.0";
-export const AGNES_MODELS = [AGNES_IMAGE_MODEL, AGNES_VIDEO_MODEL];
+export const AGNES_TEXT_MODEL = "agnes-2.0-flash";
+export const AGNES_MODELS = [AGNES_IMAGE_MODEL, AGNES_VIDEO_MODEL, AGNES_TEXT_MODEL];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -163,13 +164,13 @@ export function modelMatchesCapability(model: string, capability?: ModelCapabili
     return isTextModelName(model);
 }
 
-/** AgnesAI 渠道只提供图像和视频生成，文本/音频请求会直接失败，不允许被选为对应模型。 */
+/** AgnesAI 渠道提供文本、图像和视频生成，音频请求会直接失败，不允许被选为音频模型。 */
 export function channelSupportsCapability(channels: ModelChannel[], model: string, capability?: ModelCapability) {
     if (!capability || !channels.length) return true;
     const decoded = decodeChannelModel(model);
     const channel = decoded ? channels.find((item) => item.id === decoded.channelId) : channels.find((item) => item.models.includes(model));
     if (channel?.apiFormat !== "agnes") return true;
-    return capability === "image" || capability === "video";
+    return capability !== "audio";
 }
 
 export function filterModelsByCapability(models: string[], capability?: ModelCapability, channels?: ModelChannel[]) {
