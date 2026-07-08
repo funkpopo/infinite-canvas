@@ -163,13 +163,22 @@ export function modelMatchesCapability(model: string, capability?: ModelCapabili
     return isTextModelName(model);
 }
 
-export function filterModelsByCapability(models: string[], capability?: ModelCapability) {
-    return capability ? models.filter((model) => modelMatchesCapability(model, capability)) : models;
+/** AgnesAI 渠道只提供图像和视频生成，文本/音频请求会直接失败，不允许被选为对应模型。 */
+export function channelSupportsCapability(channels: ModelChannel[], model: string, capability?: ModelCapability) {
+    if (!capability || !channels.length) return true;
+    const decoded = decodeChannelModel(model);
+    const channel = decoded ? channels.find((item) => item.id === decoded.channelId) : channels.find((item) => item.models.includes(model));
+    if (channel?.apiFormat !== "agnes") return true;
+    return capability === "image" || capability === "video";
+}
+
+export function filterModelsByCapability(models: string[], capability?: ModelCapability, channels?: ModelChannel[]) {
+    return capability ? models.filter((model) => modelMatchesCapability(model, capability) && channelSupportsCapability(channels || [], model, capability)) : models;
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     if (!capability) return config.models;
-    return config[modelListKey(capability)];
+    return config[modelListKey(capability)].filter((model) => channelSupportsCapability(config.channels, model, capability));
 }
 
 function modelListKey(capability: ModelCapability) {
@@ -246,10 +255,10 @@ export const useConfigStore = create<ConfigStore>()(
                         agnesVideoMode: config.agnesVideoMode || "ti2vid",
                         imageResponseFormat: config.imageResponseFormat || "b64_json",
                         canvasImageCount: config.canvasImageCount || "3",
-                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
-                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
-                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : filterModelsByCapability(models, "text"),
-                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : filterModelsByCapability(models, "audio"),
+                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels, "image") : filterModelsByCapability(models, "image", channels),
+                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels, "video") : filterModelsByCapability(models, "video", channels),
+                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels, "text") : filterModelsByCapability(models, "text", channels),
+                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels, "audio") : filterModelsByCapability(models, "audio", channels),
                     },
                 };
             },
@@ -257,11 +266,12 @@ export const useConfigStore = create<ConfigStore>()(
     ),
 );
 
-function normalizeModelList(models: string[], channels: ModelChannel[]) {
+function normalizeModelList(models: string[], channels: ModelChannel[], capability?: ModelCapability) {
     const allModelOptions = channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model)));
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)))
         .map((model) => normalizeModelOptionValue(model, channels))
-        .filter((model) => !allModelOptions.length || allModelOptions.includes(model) || !isChannelModelValue(model));
+        .filter((model) => !allModelOptions.length || allModelOptions.includes(model) || !isChannelModelValue(model))
+        .filter((model) => channelSupportsCapability(channels, model, capability));
 }
 
 export function useEffectiveConfig() {

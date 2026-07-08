@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, resolveModelRequestConfig, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_MODELS, buildApiUrl, resolveModelRequestConfig, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -180,9 +180,11 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
+const AGNES_DEFAULT_IMAGE_SIZE = "1024x768";
+
 function resolveAgnesRequestSize(config: Pick<AiConfig, "size">) {
     const size = config.size.trim();
-    if (!size || size.toLowerCase() === "auto") throw new Error("Agnes Image 必须选择明确尺寸或宽高比，不能使用 auto");
+    if (!size || size.toLowerCase() === "auto") return AGNES_DEFAULT_IMAGE_SIZE;
     const dimensions = parseImageDimensions(size);
     if (dimensions) {
         validateAgnesImageSize(dimensions.width, dimensions.height);
@@ -828,6 +830,14 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+    if (config.apiFormat === "agnes") {
+        try {
+            const models = await fetchOpenAiModels(config);
+            return models.length ? models : [...AGNES_MODELS];
+        } catch {
+            return [...AGNES_MODELS];
+        }
+    }
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
@@ -837,18 +847,22 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
-            headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-            },
-        });
-        return (response.data.data || [])
-            .map((model) => model.id)
-            .filter((id): id is string => Boolean(id))
-            .sort((a, b) => a.localeCompare(b));
+        return fetchOpenAiModels(config);
     } catch (error) {
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
+}
+
+async function fetchOpenAiModels(config: Pick<AiConfig, "baseUrl" | "apiKey">) {
+    const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+        },
+    });
+    return (response.data.data || [])
+        .map((model) => model.id)
+        .filter((id): id is string => Boolean(id))
+        .sort((a, b) => a.localeCompare(b));
 }
 
 export async function fetchChannelModels(channel: ModelChannel) {

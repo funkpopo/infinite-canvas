@@ -29,14 +29,13 @@ const aspectOptions = [
 ];
 
 const agnesAspectOptions = [
-    { value: "1024x768", label: "标准", width: 1024, height: 768, icon: "landscape" },
-    { value: "768x1024", label: "竖图", width: 768, height: 1024, icon: "portrait" },
+    { value: "1024x768", label: "标准 4:3", width: 1024, height: 768, icon: "landscape" },
+    { value: "768x1024", label: "竖图 3:4", width: 768, height: 1024, icon: "portrait" },
     { value: "1024x1024", label: "方形", width: 1024, height: 1024, icon: "square" },
     { value: "1536x1024", label: "宽图", width: 1536, height: 1024, icon: "landscape" },
     { value: "1024x1536", label: "长图", width: 1024, height: 1536, icon: "portrait" },
     { value: "2048x1152", label: "16:9", width: 2048, height: 1152, icon: "landscape" },
     { value: "1152x2048", label: "9:16", width: 1152, height: 2048, icon: "portrait" },
-    { value: "1024x768", label: "4:3", width: 1024, height: 768, icon: "landscape" },
 ];
 
 const agnesResponseFormatOptions = [

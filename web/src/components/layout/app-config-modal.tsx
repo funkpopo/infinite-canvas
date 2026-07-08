@@ -7,7 +7,7 @@ import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { AGNES_MODELS, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_MODELS, channelSupportsCapability, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -155,7 +155,9 @@ export function AppConfigModal() {
     };
 
     const updateCapabilityModels = (group: ModelGroup, models: string[]) => {
-        const next = uniqueModels(models.map((model) => normalizeModelOptionValue(model, config.channels)).filter(Boolean));
+        const normalized = uniqueModels(models.map((model) => normalizeModelOptionValue(model, config.channels)).filter(Boolean));
+        const next = normalized.filter((model) => channelSupportsCapability(config.channels, model, group.capability));
+        if (next.length < normalized.length) message.warning("AgnesAI 渠道仅支持生图和视频模型，已自动移除不支持的选项");
         updateConfig(group.modelsKey, next);
         if (!next.includes(config[group.modelKey])) updateConfig(group.modelKey, next[0] || "");
     };
@@ -430,10 +432,10 @@ export function AppConfigModal() {
 
 function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     const models = modelOptionsFromChannels(channels);
-    const imageModels = keepOrSuggest(config.imageModels, filterModelsByCapability(models, "image"), models);
-    const videoModels = keepOrSuggest(config.videoModels, filterModelsByCapability(models, "video"), models);
-    const textModels = keepOrSuggest(config.textModels, filterModelsByCapability(models, "text"), models);
-    const audioModels = keepOrSuggest(config.audioModels, filterModelsByCapability(models, "audio"), models);
+    const imageModels = keepOrSuggest(config.imageModels, filterModelsByCapability(models, "image", channels), models, channels, "image");
+    const videoModels = keepOrSuggest(config.videoModels, filterModelsByCapability(models, "video", channels), models, channels, "video");
+    const textModels = keepOrSuggest(config.textModels, filterModelsByCapability(models, "text", channels), models, channels, "text");
+    const audioModels = keepOrSuggest(config.audioModels, filterModelsByCapability(models, "audio", channels), models, channels, "audio");
     return {
         ...config,
         channels,
@@ -452,9 +454,9 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     };
 }
 
-function keepOrSuggest(current: string[], suggested: string[], allModels: string[]) {
+function keepOrSuggest(current: string[], suggested: string[], allModels: string[], channels: ModelChannel[], capability: ModelCapability) {
     const available = new Set(allModels);
-    const kept = uniqueModels(current).filter((model) => available.has(model));
+    const kept = uniqueModels(current).filter((model) => available.has(model) && channelSupportsCapability(channels, model, capability));
     return kept.length ? kept : suggested;
 }
 

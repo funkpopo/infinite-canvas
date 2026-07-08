@@ -400,7 +400,8 @@ function unwrapAgnesTask(payload: ApiEnvelope<AgnesVideoTask>) {
 }
 
 function readAgnesVideoUrl(task: AgnesVideoTask) {
-    return task.remixed_from_video_id || task.video_url || task.url || task.output?.video_url || task.output?.url || "";
+    const candidates = [task.video_url, task.url, task.output?.video_url, task.output?.url, task.remixed_from_video_id];
+    return candidates.find((value): value is string => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
 }
 
 function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
