@@ -38,6 +38,10 @@ const agnesModeOptions = [
     { value: "keyframes", label: "关键帧" },
 ];
 
+export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
+export const videoSizeOptions = sizeOptions.map((item) => ({ value: item.value, label: item.label }));
+export const videoSecondOptions = secondOptions.map((value) => String(value));
+
 type VideoSettingsPanelProps = {
     config: AiConfig;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoFrameRate" | "videoInferenceSteps" | "videoSeed" | "videoNegativePrompt" | "agnesVideoMode", value: string) => void;

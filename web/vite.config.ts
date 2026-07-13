@@ -11,6 +11,7 @@ const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() 
 const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
 
 export default defineConfig({
+    base: process.env.VITE_BASE || "/",
     plugins: [react()],
     resolve: {
         alias: {

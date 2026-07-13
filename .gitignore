@@ -10,3 +10,4 @@ data/
 .idea
 
 agnes*.md
+web/dist

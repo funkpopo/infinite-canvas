@@ -43,6 +43,9 @@ const agnesResponseFormatOptions = [
     { value: "url", label: "URL" },
 ];
 
+export const imageQualityOptions = qualityOptions.map((item) => ({ value: item.value, label: item.label }));
+export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.size || item.value, label: item.label }));
+
 type ImageSettingsPanelProps = {
     config: AiConfig;
     onConfigChange: (key: "quality" | "size" | "count" | "imageResponseFormat", value: string) => void;
