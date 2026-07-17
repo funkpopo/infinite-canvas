@@ -8,6 +8,8 @@ data/
 *.tsbuildinfo
 .DS_Store
 .idea
-
 agnes*.md
 web/dist
+**/dist
+web/public/plugins
+plugins/canvas/*/node_modules

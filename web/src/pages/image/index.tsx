@@ -250,7 +250,7 @@ export default function ImagePage() {
                 return;
             }
         } else {
-            message.warning("生图工作台只能使用文本或图片素材");
+            message.warning("生图工作台只能使用文本或图片资产");
         }
         setAssetPickerOpen(false);
     };
@@ -404,7 +404,7 @@ export default function ImagePage() {
                                             查看提示词库
                                         </Button>
                                         <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            查看我的素材
+                                            查看我的资产
                                         </Button>
                                     </div>
                                 </div>
@@ -576,9 +576,9 @@ function ResultImageCard({
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
-                    <Tooltip title="添加到素材">
+                    <Tooltip title="添加到资产">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
-                            添加到素材
+                            添加到资产
                         </Button>
                     </Tooltip>
                     <Tooltip title="加入参考图">

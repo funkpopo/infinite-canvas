@@ -48,7 +48,7 @@ export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.siz
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "imageResponseFormat", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count" | "imageResponseFormat" | "background", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -66,6 +66,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
+    const transparentBackground = config.background === "transparent";
     const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
     const selectAspect = (value: string) => {
@@ -136,6 +137,17 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </button>
                         ))}
                     </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                        <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
+                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                            开启后生成无背景的透明图像(仅部分模型可用)
+                        </div>
+                    </div>
+                    <span onMouseDown={(event) => event.stopPropagation()}>
+                        <Switch size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
+                    </span>
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
