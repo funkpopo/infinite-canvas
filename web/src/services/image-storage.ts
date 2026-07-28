@@ -2,6 +2,7 @@ import localforage from "localforage";
 
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
+import { proxiedMediaUrl } from "@/services/file-storage";
 
 export type UploadedImage = {
     url: string;
@@ -118,7 +119,7 @@ function isRemoteUrl(value: string) {
 }
 
 function proxiedImageUrl(url: string) {
-    return url;
+    return proxiedMediaUrl(url);
 }
 
 async function normalizeImageBlob(blob: Blob) {

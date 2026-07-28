@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [修复] 修复 Agnes 生成图 URL 入库时直连 `platform-outputs` 触发 CORS 的问题，图片拉取改为走同源 `/agnes-outputs/` 代理。
++ [修复] 修复 Docker 启动时 `40-runtime-config.sh: not found`（Windows CRLF 行尾导致入口脚本无法执行）。
 + [新增] 新增 AgnesAI 渠道，支持 Agnes 文本、图片和视频模型及专属生成参数。
 + [调整] 模型渠道编辑器兼容 AgnesAI，并保留模型能力标注与自定义调用脚本。
 + [调整] Agnes Image 按文档使用尺寸档位（1K–4K）与宽高比（含 21:9），请求携带 `size`+`ratio`，不再把比例硬展开成像素。
