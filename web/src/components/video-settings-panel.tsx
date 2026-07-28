@@ -22,13 +22,19 @@ const sizeOptions = [
 
 const secondOptions = [5, 6, 10, 12, 16, 20];
 
-const agnesVideoSizeOptions = [
-    { value: "1152x768", label: "标准", width: 1152, height: 768 },
-    { value: "768x1152", label: "竖屏", width: 768, height: 1152 },
-    { value: "768x768", label: "方形", width: 768, height: 768 },
-    { value: "1024x768", label: "4:3", width: 1024, height: 768 },
-    { value: "768x1024", label: "3:4", width: 768, height: 1024 },
-    { value: "1280x720", label: "16:9", width: 1280, height: 720 },
+const agnesResolutionOptions = [
+    { value: "480", label: "480p" },
+    { value: "720", label: "720p" },
+    { value: "1080", label: "1080p" },
+];
+
+const agnesVideoRatioOptions = [
+    { value: "16:9", label: "16:9", width: 16, height: 9 },
+    { value: "9:16", label: "9:16", width: 9, height: 16 },
+    { value: "1:1", label: "1:1", width: 1, height: 1 },
+    { value: "4:3", label: "4:3", width: 4, height: 3 },
+    { value: "3:4", label: "3:4", width: 3, height: 4 },
+    { value: "auto", label: "默认", width: 0, height: 0 },
 ];
 
 const agnesSecondOptions = [3, 5, 10, 18];
@@ -126,16 +132,13 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
 function AgnesVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
     const seconds = config.videoSeconds || "5";
-    const size = normalizeAgnesVideoSizeValue(config.size);
-    const dimensions = readSizeDimensions(size);
+    const resolution = normalizeAgnesResolutionValue(config.vquality);
+    const ratio = normalizeAgnesVideoRatioValue(config.size);
     const frameRate = normalizeAgnesFrameRateValue(config.videoFrameRate);
     const inferenceSteps = config.videoInferenceSteps || "";
     const seed = config.videoSeed || "";
     const mode = config.agnesVideoMode === "keyframes" ? "keyframes" : "ti2vid";
-    const updateDimension = (key: "width" | "height", value: number | null) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 768));
-        onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
-    };
+    const selectedRatio = agnesVideoRatioOptions.find((item) => item.value === ratio) || agnesVideoRatioOptions[agnesVideoRatioOptions.length - 1];
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -157,29 +160,34 @@ function AgnesVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
                             </OptionPill>
                         ))}
                     </div>
+                    <div className="text-[11px] leading-4 opacity-60">普通：文生视频 / 单图生视频；关键帧：至少 2 张参考图</div>
                 </SettingGroup>
-                <SettingGroup title="尺寸" color={theme.node.muted}>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={false} theme={theme} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={false} theme={theme} onChange={(value) => updateDimension("height", value)} />
-                    </div>
+                <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {agnesVideoSizeOptions.map((item) => (
+                        {agnesResolutionOptions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="比例" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {agnesVideoRatioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
-                                className="flex h-[78px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
-                                style={{ borderColor: size === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
+                                style={{ borderColor: selectedRatio.value === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => onConfigChange("size", item.value)}
                             >
                                 <SizePreview width={item.width} height={item.height} color={theme.node.text} />
                                 <span>{item.label}</span>
-                                <span className="text-[11px] leading-none opacity-55">{item.value}</span>
                             </button>
                         ))}
                     </div>
+                    <div className="text-[11px] leading-4 opacity-60">选择「默认」时不传宽高，使用接口默认 1152×768</div>
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -210,7 +218,7 @@ function AgnesVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
                         rows={3}
                         className="w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm leading-5 outline-none"
                         style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
-                        placeholder="反向提示词"
+                        placeholder="反向提示词（可选）"
                         value={config.videoNegativePrompt}
                         onChange={(event) => onConfigChange("videoNegativePrompt", event.target.value)}
                         onMouseDown={(event) => event.stopPropagation()}
@@ -286,10 +294,14 @@ export function videoResolutionLabel(value: string) {
 
 export function videoSizeLabel(value: string) {
     const ratio = normalizeSeedanceRatio(value);
-    if (value === "adaptive" || value === "auto") return "自适应";
+    if (value === "adaptive") return "自适应";
+    if (value === "auto") return "默认";
+    if (agnesVideoRatioOptions.some((item) => item.value === value)) {
+        return agnesVideoRatioOptions.find((item) => item.value === value)?.label || value;
+    }
     if (ratio === value) return seedanceRatioOptions.find((item) => item.value === ratio)?.label || ratio;
     const size = normalizeVideoSizeValue(value);
-    return agnesVideoSizeOptions.find((item) => item.value === size)?.label || sizeOptions.find((item) => item.value === size)?.label || size;
+    return sizeOptions.find((item) => item.value === size)?.label || size;
 }
 
 export function videoSecondsLabel(value: string) {
@@ -308,12 +320,31 @@ export function normalizeVideoSizeValue(value: string) {
 }
 
 export function normalizeAgnesVideoSizeValue(value: string) {
-    if (!value || value === "auto" || value === "1:1") return "1152x768";
-    if (/^\d+x\d+$/.test(value)) return value;
-    if (value === "9:16") return "768x1152";
-    if (value === "3:4") return "768x1024";
-    if (value === "4:3") return "1024x768";
-    return "1152x768";
+    return normalizeAgnesVideoRatioValue(value);
+}
+
+export function normalizeAgnesVideoRatioValue(value: string) {
+    const normalized = (value || "").trim();
+    if (!normalized || normalized === "auto") return "auto";
+    if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(normalized)) return normalized;
+    if (/^\d+x\d+$/.test(normalized)) {
+        const [width, height] = normalized.split("x").map(Number);
+        const target = width / Math.max(1, height);
+        return agnesVideoRatioOptions
+            .filter((item) => item.value !== "auto")
+            .reduce((best, item) => {
+                const current = item.width / item.height;
+                const bestRatio = best.width / best.height;
+                return Math.abs(current - target) < Math.abs(bestRatio - target) ? item : best;
+            }).value;
+    }
+    return "16:9";
+}
+
+export function normalizeAgnesResolutionValue(value: string) {
+    if (value === "480" || value === "480p" || value === "low") return "480";
+    if (value === "1080" || value === "1080p") return "1080";
+    return "720";
 }
 
 export function normalizeVideoResolutionValue(value: string) {

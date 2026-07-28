@@ -28,14 +28,22 @@ const aspectOptions = [
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
+const agnesSizeTierOptions = [
+    { value: "1K", label: "1K" },
+    { value: "2K", label: "2K" },
+    { value: "3K", label: "3K" },
+    { value: "4K", label: "4K" },
+];
+
 const agnesAspectOptions = [
-    { value: "1024x768", label: "标准 4:3", width: 1024, height: 768, icon: "landscape" },
-    { value: "768x1024", label: "竖图 3:4", width: 768, height: 1024, icon: "portrait" },
-    { value: "1024x1024", label: "方形", width: 1024, height: 1024, icon: "square" },
-    { value: "1536x1024", label: "宽图", width: 1536, height: 1024, icon: "landscape" },
-    { value: "1024x1536", label: "长图", width: 1024, height: 1536, icon: "portrait" },
-    { value: "2048x1152", label: "16:9", width: 2048, height: 1152, icon: "landscape" },
-    { value: "1152x2048", label: "9:16", width: 1152, height: 2048, icon: "portrait" },
+    { value: "1:1", label: "1:1", width: 1, height: 1, icon: "square" },
+    { value: "3:4", label: "3:4", width: 3, height: 4, icon: "portrait" },
+    { value: "4:3", label: "4:3", width: 4, height: 3, icon: "landscape" },
+    { value: "16:9", label: "16:9", width: 16, height: 9, icon: "landscape" },
+    { value: "9:16", label: "9:16", width: 9, height: 16, icon: "portrait" },
+    { value: "2:3", label: "2:3", width: 2, height: 3, icon: "portrait" },
+    { value: "3:2", label: "3:2", width: 3, height: 2, icon: "landscape" },
+    { value: "21:9", label: "21:9", width: 21, height: 9, icon: "landscape" },
 ];
 
 const agnesResponseFormatOptions = [
@@ -167,16 +175,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
 function AgnesImageSettingsPanel({ config, onConfigChange, theme, showTitle, className, maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size && config.size !== "auto" ? config.size : "1024x768";
-    const selectedAspect = agnesAspectOptions.find((item) => item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || agnesAspectOptions[0]);
+    const sizeTier = normalizeAgnesSizeTierValue(config.quality);
+    const activeRatio = normalizeAgnesRatioValue(config.size);
+    const selectedAspect = agnesAspectOptions.find((item) => item.value === activeRatio) || agnesAspectOptions[0];
     const responseFormat = config.imageResponseFormat === "url" ? "url" : "b64_json";
-    const updateDimension = (key: "width" | "height", value: number | null) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
-        const width = key === "width" ? next : dimensions.width;
-        const height = key === "height" ? next : dimensions.height;
-        onConfigChange("size", `${width}x${height}`);
-    };
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -201,22 +203,24 @@ function AgnesImageSettingsPanel({ config, onConfigChange, theme, showTitle, cla
                     </div>
                 </div>
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={false} theme={theme} alignToStep={false} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={false} theme={theme} alignToStep={false} onChange={(value) => updateDimension("height", value)} />
+                    <SettingTitle color={theme.node.muted}>尺寸档位</SettingTitle>
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {agnesSizeTierOptions.map((item) => (
+                            <OptionPill key={item.value} selected={sizeTier === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
                     </div>
                 </div>
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>预设</SettingTitle>
+                    <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {agnesAspectOptions.map((item, index) => (
+                        {agnesAspectOptions.map((item) => (
                             <button
-                                key={`${item.value}-${index}`}
+                                key={item.value}
                                 type="button"
                                 className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
-                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                                style={{ borderColor: selectedAspect.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => onConfigChange("size", item.value)}
                             >
@@ -256,15 +260,40 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageQualityLabel(value: string) {
+    const agnesTier = normalizeAgnesSizeTierValue(value);
+    if (["1K", "2K", "3K", "4K"].includes(value) || ["1K", "2K", "3K", "4K"].includes(agnesTier)) return agnesTier;
     return ({ auto: "自动", high: "高", medium: "中", low: "低" } as Record<string, string>)[value] || value;
 }
 
 export function imageSizeLabel(size: string) {
-    return [...agnesAspectOptions.map((item) => ({ ...item, size: item.value })), ...aspectOptions].find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
+    return [...agnesAspectOptions, ...aspectOptions].find((item) => ("size" in item ? item.size : item.value) === size || item.value === size)?.label || size;
 }
 
 export function imageResponseFormatLabel(value: string) {
     return value === "url" ? "URL" : "Base64";
+}
+
+export function normalizeAgnesSizeTierValue(value: string) {
+    const normalized = (value || "").trim().toUpperCase();
+    if (normalized === "1K" || normalized === "2K" || normalized === "3K" || normalized === "4K") return normalized;
+    if (normalized === "HIGH") return "2K";
+    if (normalized === "MEDIUM" || normalized === "LOW" || normalized === "AUTO" || !normalized) return "1K";
+    return "1K";
+}
+
+export function normalizeAgnesRatioValue(value: string) {
+    const normalized = (value || "").trim();
+    if (agnesAspectOptions.some((item) => item.value === normalized)) return normalized;
+    if (/^\d+x\d+$/i.test(normalized)) {
+        const [width, height] = normalized.toLowerCase().split("x").map(Number);
+        const target = width / Math.max(1, height);
+        return agnesAspectOptions.reduce((best, item) => {
+            const current = item.width / item.height;
+            const bestRatio = best.width / best.height;
+            return Math.abs(current - target) < Math.abs(bestRatio - target) ? item : best;
+        }).value;
+    }
+    return "1:1";
 }
 
 function isAgnesImageConfig(config: AiConfig) {

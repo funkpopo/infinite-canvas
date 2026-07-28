@@ -199,18 +199,44 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
-const AGNES_DEFAULT_IMAGE_SIZE = "1024x768";
+const AGNES_IMAGE_SIZE_TIERS = ["1K", "2K", "3K", "4K"] as const;
+const AGNES_IMAGE_RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"] as const;
 
-function resolveAgnesRequestSize(config: Pick<AiConfig, "size">) {
-    const size = config.size.trim();
-    if (!size || size.toLowerCase() === "auto") return AGNES_DEFAULT_IMAGE_SIZE;
-    const dimensions = parseImageDimensions(size);
+function resolveAgnesImageRequest(config: Pick<AiConfig, "size" | "quality">) {
+    const sizeValue = config.size.trim();
+    const qualityValue = config.quality.trim();
+    const tierFromSize = normalizeAgnesImageSizeTier(sizeValue);
+    const tierFromQuality = normalizeAgnesImageSizeTier(qualityValue);
+    const ratio = normalizeAgnesImageRatio(sizeValue) || (tierFromSize ? normalizeAgnesImageRatio(qualityValue) : null);
+    const dimensions = parseImageDimensions(sizeValue);
+
+    // 推荐写法：档位 size + ratio；兼容历史精确像素尺寸。
+    if (tierFromSize || tierFromQuality || ratio) {
+        return {
+            size: tierFromSize || tierFromQuality || "1K",
+            ...(ratio ? { ratio } : {}),
+        };
+    }
     if (dimensions) {
         validateAgnesImageSize(dimensions.width, dimensions.height);
-        return `${dimensions.width}x${dimensions.height}`;
+        return { size: `${dimensions.width}x${dimensions.height}` };
     }
-    if (size.includes(":")) return resolveAgnesRatioSize(size);
-    throw new Error("Agnes Image 尺寸格式不支持，请使用 1024x768 或 4:3");
+    if (!sizeValue || sizeValue.toLowerCase() === "auto") return { size: "1K", ratio: "1:1" };
+    throw new Error("Agnes Image 尺寸格式不支持，请使用 1K/2K + 比例，或 1024x768");
+}
+
+function normalizeAgnesImageSizeTier(value: string): (typeof AGNES_IMAGE_SIZE_TIERS)[number] | null {
+    const normalized = value.trim().toUpperCase();
+    if ((AGNES_IMAGE_SIZE_TIERS as readonly string[]).includes(normalized)) return normalized as (typeof AGNES_IMAGE_SIZE_TIERS)[number];
+    if (normalized === "HIGH") return "2K";
+    if (normalized === "MEDIUM" || normalized === "LOW" || normalized === "AUTO") return "1K";
+    return null;
+}
+
+function normalizeAgnesImageRatio(value: string): (typeof AGNES_IMAGE_RATIOS)[number] | null {
+    const normalized = value.trim();
+    if ((AGNES_IMAGE_RATIOS as readonly string[]).includes(normalized)) return normalized as (typeof AGNES_IMAGE_RATIOS)[number];
+    return null;
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
@@ -861,30 +887,42 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
-    const requestSize = resolveAgnesRequestSize(config);
+    const request = resolveAgnesImageRequest(config);
     const imageUrls = references.length ? await Promise.all(references.map(resolveAgnesReferenceImageUrl)) : [];
     const responseFormat = normalizeAgnesImageResponseFormat(config.imageResponseFormat);
-    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, requestSize, responseFormat, options));
+    const requests = Array.from({ length: count }, () => requestAgnesImagesOnce(config, prompt, imageUrls, request, responseFormat, options));
     return (await Promise.all(requests)).flat();
 }
 
-async function requestAgnesImagesOnce(config: AiConfig, prompt: string, images: string[], size: string, responseFormat: "url" | "b64_json", options?: RequestOptions) {
-    const extra_body = {
-        ...(images.length ? { image: images } : {}),
-        response_format: responseFormat,
-    };
+async function requestAgnesImagesOnce(
+    config: AiConfig,
+    prompt: string,
+    images: string[],
+    request: { size: string; ratio?: string },
+    responseFormat: "url" | "b64_json",
+    options?: RequestOptions,
+) {
+    const extra_body: Record<string, unknown> = {};
+    if (images.length) extra_body.image = images;
+    // 文生图 Base64 用 return_base64；URL 输出和图生图用 extra_body.response_format，勿放顶层。
+    if (images.length || responseFormat === "url") extra_body.response_format = responseFormat;
+
     const body: Record<string, unknown> = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
-        size,
-        ...(images.length || responseFormat === "url" ? { extra_body } : { return_base64: true }),
+        size: request.size,
+        ...(request.ratio ? { ratio: request.ratio } : {}),
     };
+    if (Object.keys(extra_body).length) body.extra_body = extra_body;
+    else body.return_base64 = true;
+
     const response = await axios.post<ImageApiResponse>(
         aiApiUrl(config, "/images/generations"),
         body,
         {
             headers: aiHeaders(config, "application/json"),
             signal: options?.signal,
+            timeout: 360000,
         },
     );
     return parseImagePayload(response.data);
@@ -894,29 +932,8 @@ function validateAgnesImageSize(width: number, height: number) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("Agnes Image 尺寸必须是正整数，例如 1024x768");
 }
 
-function resolveAgnesRatioSize(value: string) {
-    const ratio = parseAgnesImageRatio(value);
-    const isLandscape = ratio.width >= ratio.height;
-    const longRatio = isLandscape ? ratio.width / ratio.height : ratio.height / ratio.width;
-    const shortSide = 1024;
-    const longSide = Math.round(shortSide * longRatio);
-    const width = isLandscape ? longSide : shortSide;
-    const height = isLandscape ? shortSide : longSide;
-    validateAgnesImageSize(width, height);
-    return `${width}x${height}`;
-}
-
 function normalizeAgnesImageResponseFormat(value: string): "url" | "b64_json" {
     return value === "url" ? "url" : "b64_json";
-}
-
-function parseAgnesImageRatio(value: string) {
-    const parts = value.split(":");
-    if (parts.length !== 2) throw new Error("Agnes Image 比例格式不支持，请使用 4:3");
-    const width = Number(parts[0]);
-    const height = Number(parts[1]);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) throw new Error("Agnes Image 比例必须是正数，例如 4:3");
-    return { width, height };
 }
 
 async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {

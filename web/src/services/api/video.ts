@@ -21,6 +21,7 @@ type AgnesVideoTask = {
     video_url?: string;
     url?: string;
     output?: { video_url?: string; url?: string } | null;
+    metadata?: { url?: string; size_mapping?: Record<string, unknown> } | null;
     error?: { message?: string } | null;
 };
 type SeedanceTask = {
@@ -187,20 +188,19 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
 async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
     const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesReferenceImageUrl(image)));
-    const { width, height } = normalizeAgnesVideoSize(config.size, config.vquality);
+    const dimensions = resolveAgnesVideoDimensions(config.size, config.vquality);
     const frameRate = normalizeAgnesFrameRate(config.videoFrameRate);
     const keyframes = images.length > 1 || normalizeAgnesVideoMode(config.agnesVideoMode) === "keyframes";
     if (keyframes && images.length < 2) throw new Error("Agnes Video 关键帧模式至少需要 2 张参考图");
+    // 关键帧走 extra_body；普通文/图生视频不强制 mode（文档可选）。
     const extra_body = keyframes ? { image: images, mode: "keyframes" } : undefined;
     const negativePrompt = config.videoNegativePrompt.trim();
     const inferenceSteps = normalizeOptionalPositiveInt(config.videoInferenceSteps);
     const seed = normalizeOptionalInteger(config.videoSeed);
-    const payload = {
+    const payload: Record<string, unknown> = {
         model: modelOptionName(model),
         prompt,
-        ...(keyframes ? {} : { mode: "ti2vid" }),
-        width,
-        height,
+        ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
         num_frames: normalizeAgnesNumFrames(config.videoSeconds, frameRate),
         frame_rate: frameRate,
         ...(typeof inferenceSteps === "number" ? { num_inference_steps: inferenceSteps } : {}),
@@ -211,7 +211,7 @@ async function createAgnesTask(config: AiConfig, model: string, prompt: string, 
     };
 
     try {
-        const created = unwrapAgnesTask((await axios.post<ApiEnvelope<AgnesVideoTask>>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const created = unwrapAgnesTask((await axios.post<ApiEnvelope<AgnesVideoTask>>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: 60000 })).data);
         const taskId = created.task_id || created.id;
         const id = created.video_id || taskId;
         if (!id) throw new Error("Agnes Video 接口没有返回任务 ID");
@@ -397,21 +397,63 @@ function normalizeVideoResolution(value: string) {
     return `${resolution}p`;
 }
 
-function normalizeAgnesVideoSize(size: string, resolution: string) {
-    if (!size || size === "auto" || size === "1:1") return { width: 1152, height: 768 };
-    const normalizedResolution = normalizeVideoResolution(resolution);
-    const longSide = normalizedResolution === "480p" ? 720 : normalizedResolution === "1080p" ? 1536 : 1152;
-    const shortSide = normalizedResolution === "480p" ? 480 : normalizedResolution === "1080p" ? 1024 : 768;
-    const ratio = size.match(/^(\d+):(\d+)$/);
-    if (ratio) {
-        const w = Number(ratio[1]);
-        const h = Number(ratio[2]);
-        const scaled = Math.round((shortSide * Math.max(w, h)) / Math.min(w, h) / 2) * 2;
-        return w >= h ? { width: scaled, height: shortSide } : { width: shortSide, height: scaled };
+/** 文档标准档位参考尺寸；服务端仍会标准化到最近预设。空/auto 时不传 width/height，走接口默认。 */
+const AGNES_VIDEO_SIZE_PRESETS: Record<string, Record<string, { width: number; height: number }>> = {
+    "480p": {
+        "16:9": { width: 832, height: 448 },
+        "9:16": { width: 448, height: 832 },
+        "1:1": { width: 640, height: 640 },
+        "4:3": { width: 640, height: 480 },
+        "3:4": { width: 480, height: 640 },
+    },
+    "720p": {
+        "16:9": { width: 1280, height: 720 },
+        "9:16": { width: 720, height: 1280 },
+        "1:1": { width: 768, height: 768 },
+        "4:3": { width: 1024, height: 768 },
+        "3:4": { width: 768, height: 1024 },
+    },
+    "1080p": {
+        "16:9": { width: 1920, height: 1080 },
+        "9:16": { width: 1080, height: 1920 },
+        "1:1": { width: 1080, height: 1080 },
+        "4:3": { width: 1440, height: 1080 },
+        "3:4": { width: 1080, height: 1440 },
+    },
+};
+
+function resolveAgnesVideoDimensions(size: string, resolution: string): { width: number; height: number } | null {
+    const trimmed = (size || "").trim();
+    if (!trimmed || trimmed === "auto") return null;
+
+    const custom = trimmed.match(/^(\d+)x(\d+)$/);
+    if (custom) {
+        const width = Number(custom[1]);
+        const height = Number(custom[2]);
+        if (Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0) return { width, height };
     }
-    const custom = normalizeVideoSize(size)?.match(/^(\d+)x(\d+)$/);
-    if (custom) return { width: Number(custom[1]), height: Number(custom[2]) };
-    return { width: longSide, height: shortSide };
+
+    const ratio = normalizeAgnesVideoRatio(trimmed);
+    const tier = normalizeAgnesVideoResolution(resolution);
+    if (ratio && tier) {
+        const preset = AGNES_VIDEO_SIZE_PRESETS[tier]?.[ratio];
+        if (preset) return preset;
+    }
+
+    // 未识别时不硬塞默认像素，交给接口默认值。
+    return null;
+}
+
+function normalizeAgnesVideoResolution(value: string) {
+    const normalized = normalizeVideoResolution(value);
+    if (normalized === "480p" || normalized === "720p" || normalized === "1080p") return normalized;
+    return "720p";
+}
+
+function normalizeAgnesVideoRatio(value: string) {
+    const normalized = value.trim();
+    if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(normalized)) return normalized;
+    return null;
 }
 
 function normalizeAgnesNumFrames(value: string, frameRate: number) {
@@ -459,7 +501,7 @@ function unwrapAgnesTask(payload: ApiEnvelope<AgnesVideoTask>) {
 }
 
 function readAgnesVideoUrl(task: AgnesVideoTask) {
-    const candidates = [task.video_url, task.url, task.output?.video_url, task.output?.url, task.remixed_from_video_id];
+    const candidates = [task.metadata?.url, task.video_url, task.url, task.output?.video_url, task.output?.url];
     return candidates.find((value): value is string => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
 }
 
