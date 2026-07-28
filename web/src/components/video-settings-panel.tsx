@@ -2,9 +2,9 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -222,8 +222,7 @@ function AgnesVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
 }
 
 function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
-    const model = modelOptionName(config.model || config.videoModel);
-    const resolution = normalizeSeedanceResolution(config.vquality, model);
+    const resolution = normalizeSeedanceResolution(config.vquality);
     const ratio = normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
@@ -235,16 +234,12 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {seedanceResolutionOptions.map((item) => {
-                            const disabled = item.value === "1080p" && isSeedanceFastModel(model);
-                            return (
-                                <OptionPill key={item.value} selected={resolution === item.value} disabled={disabled} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
-                                    {item.label}
-                                </OptionPill>
-                            );
-                        })}
+                        {seedanceResolutionOptions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
                     </div>
-                    {isSeedanceFastModel(model) ? <div className="text-[11px] leading-4 opacity-55">fast 模型不支持 1080p，会自动使用 720p。</div> : null}
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">

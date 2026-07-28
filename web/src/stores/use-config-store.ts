@@ -3,8 +3,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
-export type ApiCallFormat = "openai" | "gemini" | "agnes";
+export type ApiCallFormat = "openai" | "gemini" | "agnes" | "ark";
 export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ChannelModel = {
     name: string;
@@ -47,6 +48,7 @@ export type AiConfig = {
     agnesVideoMode: string;
     imageResponseFormat: string;
     systemPrompt: string;
+    reasoningEffort: ReasoningEffort;
     models: string[];
     quality: string;
     size: string;
@@ -62,7 +64,7 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "preferences" | "webdav";
+export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
@@ -73,6 +75,7 @@ export const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
 export const AGNES_VIDEO_MODEL = "agnes-video-v2.0";
 export const AGNES_TEXT_MODEL = "agnes-2.0-flash";
 export const AGNES_MODELS = [AGNES_IMAGE_MODEL, AGNES_VIDEO_MODEL, AGNES_TEXT_MODEL];
+const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -114,6 +117,7 @@ export const defaultConfig: AiConfig = {
     agnesVideoMode: "ti2vid",
     imageResponseFormat: "b64_json",
     systemPrompt: "",
+    reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "auto",
     size: "1:1",
@@ -172,6 +176,14 @@ export function modelCapabilityOf(config: AiConfig, value: string): ModelCapabil
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
     if (!capability) return true;
     return modelCapabilityOf(config, value) === capability;
+}
+
+export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
+    const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
+    const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
+    if (currentModel && modelMatchesCapability(config, currentModel, capability)) return currentModel;
+    if (defaultModel && modelMatchesCapability(config, defaultModel, capability)) return defaultModel;
+    return fallbackModel;
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
@@ -244,6 +256,7 @@ export const useConfigStore = create<ConfigStore>()(
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
                         audioInstructions: config.audioInstructions || "",
+                        reasoningEffort: config.reasoningEffort || "auto",
                         videoSeconds: config.videoSeconds || "5",
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
@@ -381,11 +394,12 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "agnes") return AGNES_BASE_URL;
+    if (apiFormat === "ark") return ARK_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "agnes" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "agnes" || apiFormat === "ark" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

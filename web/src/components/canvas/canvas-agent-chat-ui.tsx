@@ -48,14 +48,25 @@ export function AgentChatMessage({ item, theme, user, onRejectTool, onApproveToo
     return (
         <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
             {!isUser ? <AgentAvatar theme={theme} /> : null}
-            <div className={`min-w-0 max-w-[82%] text-sm leading-6 ${isUser ? "text-right" : "text-left"}`} style={{ color }}>
+            <div
+                className={isUser ? "min-w-0 max-w-[82%] rounded-xl rounded-br-sm border px-3.5 py-2.5 text-left text-sm leading-6" : "min-w-0 flex-1 text-left text-sm leading-6"}
+                style={
+                    isUser
+                        ? {
+                              color,
+                              background: `color-mix(in srgb, ${theme.node.text} 7%, ${theme.toolbar.panel})`,
+                              borderColor: `color-mix(in srgb, ${theme.node.text} 14%, transparent)`,
+                          }
+                        : { color }
+                }
+            >
                 {isUser ? (
-                    <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
+                    <div className="whitespace-pre-wrap break-words">{item.text}</div>
                 ) : (
                     <Streamdown animated isAnimating={!!item.streamId}>{item.text}</Streamdown>
                 )}
                 {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} /> : null}
-                {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
+                {item.meta ? <div className={`mt-1 text-[11px] opacity-45 ${isUser ? "text-right" : ""}`}>{item.meta}</div> : null}
             </div>
             {isUser ? <AgentUserAvatar user={user} theme={theme} /> : null}
         </div>
@@ -303,7 +314,7 @@ function toolCardState(title: string, text: string, detail?: unknown) {
     if (objectField(detail, "status") === "noop" || /未生效|无需|没有找到|没有.*可|已存在/.test(raw)) return { label: "未生效", color: "#d97706", softBorder: "rgba(217,119,6,.22)", softBg: "rgba(217,119,6,.04)", icon: <CircleAlert className="size-4" />, isError: false };
     if (/拒绝|取消/.test(raw) || lower.includes("rejected")) return { label: "拒绝执行", color: "#dc2626", softBorder: "rgba(220,38,38,.20)", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
     if (/失败|错误/.test(raw) || lower.includes("failed") || lower.includes("error")) return { label: "执行失败", color: "#dc2626", softBorder: "rgba(220,38,38,.20)", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
-    if (/完成|成功/.test(raw) || lower.includes("completed") || lower.includes("succeeded")) return { label: tool === "canvas_apply_ops" || /画布操作/.test(title) ? "已批准执行" : "执行完成", color: "#16a34a", softBorder: "rgba(22,163,74,.20)", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
+    if (/完成|成功/.test(raw) || lower.includes("completed") || lower.includes("succeeded")) return { label: tool === "canvas_apply_ops" || /画布操作/.test(title) ? "已批准执行" : "工具完成", color: "#16a34a", softBorder: "rgba(22,163,74,.20)", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
     return { label: "工具调用", color: "#2563eb", softBorder: "rgba(37,99,235,.20)", softBg: "rgba(37,99,235,.04)", icon: <Wrench className="size-4" />, isError: false };
 }
 
