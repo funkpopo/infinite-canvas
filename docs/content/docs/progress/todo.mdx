@@ -8,9 +8,4 @@ description: 当前项目后续值得处理的事项
 本文档用来记录当前项目后续比较值得处理的事项。
 
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
-- Agnes 长片生产：按[Agnes 长片生产规划](/docs/progress/agnes-longform-video-plan)在现有 Agnes 文本 / 图片 / 视频能力上实现剧本导入与编写、分镜结构化、首尾帧指定、ffmpeg 抽帧与多镜拼接成片。优先顺序：
-  1. **Phase 0**：ffmpeg.wasm 首尾帧抽取与基础拼接；Agnes 关键帧显式首帧 / 尾帧约定。
-  2. **Phase 1**：剧本导入（文本 / Markdown / JSON）与 LLM 拆解为分镜表。
-  3. **Phase 2**：单镜闭环（出帧 → Agnes 视频 → 抽尾帧衔接下镜）。
-  4. **Phase 3**：批量队列与成片导出。
-  5. **Phase 4（后置）**：配音字幕、转场 BGM、本机 ffmpeg、长片向导与 Agent 编排。
+- Agnes 长片生产后续（Phase 4 / 增强）：按[Agnes 长片生产规划](/docs/progress/agnes-longform-video-plan)继续完善画布节点互操作、对白 TTS / 字幕、BGM、转场、本机 ffmpeg 加速、视频页长片向导与 `longform.*` Agent 工具；当前 MVP 已在「长片工作台」落地（见待测试）。

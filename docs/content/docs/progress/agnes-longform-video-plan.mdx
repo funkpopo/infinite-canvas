@@ -243,30 +243,30 @@ concatVideos(clips: Blob[], options?: { transitions?: "none" | "crossfade" }): P
 
 ### Phase 0 — 能力补齐（底层，不依赖完整 UI）
 
-- [ ] 明确 Agnes 关键帧「首帧 / 尾帧」参数约定与校验（2 图顺序）。
-- [ ] 视频设置 / 画布：支持显式指定首帧图、尾帧图（而不只是多参考图）。
-- [ ] 接入 `ffmpeg.wasm`：`extractVideoFrame`（first/last）+ 基础 `concatVideos`。
-- [ ] 单测级手动验证：本地 mp4 抽首尾帧、两段视频硬切拼接。
+- [x] 明确 Agnes 关键帧「首帧 / 尾帧」参数约定与校验（2 图顺序）。
+- [x] 视频设置 / 画布：支持显式指定首帧图、尾帧图（而不只是多参考图）。（长片工作台槽位 + API `firstFrame`/`lastFrame`；画布侧完整槽位 UI 可继续增强）
+- [x] 接入 `ffmpeg.wasm`：`extractVideoFrame`（first/last）+ 基础 `concatVideos`。
+- [ ] 单测级手动验证：本地 mp4 抽首尾帧、两段视频硬切拼接。（见待测试）
 
 ### Phase 1 — 剧本与分镜数据
 
-- [ ] `LongformProject` / `LongformShot` 类型与 localforage 存储。
-- [ ] 剧本导入（Markdown / 纯文本 / JSON）。
-- [ ] Agnes 文本「剧本 → 结构化分镜」提示词模板 + 解析容错。
-- [ ] 分镜表基础 UI（列表编辑：时长、prompt、首尾帧槽位）。
+- [x] `LongformProject` / `LongformShot` 类型与 localforage 存储。
+- [x] 剧本导入（Markdown / 纯文本 / JSON）。
+- [x] Agnes 文本「剧本 → 结构化分镜」提示词模板 + 解析容错。
+- [x] 分镜表基础 UI（列表编辑：时长、prompt、首尾帧槽位）。
 
 ### Phase 2 — 单镜生产闭环
 
-- [ ] 从分镜一键：生成首帧（Agnes Image）→ 可选生成尾帧 → Agnes Video。
-- [ ] 从视频节点 / 分镜结果「提取首帧 / 尾帧」写入图片。
-- [ ] 链式模式：生成完成后自动尾帧 → 下一镜首帧。
+- [x] 从分镜一键：生成首帧（Agnes Image）→ 可选生成尾帧 → Agnes Video。（已拆为「批量/单镜出首帧」与「批量/单镜出视频」两阶段，分镜完成后需手动触发出首帧）
+- [x] 从视频节点 / 分镜结果「提取首帧 / 尾帧」写入图片。（长片工作台已支持抽帧；画布视频节点入口待增强）
+- [x] 链式模式：生成完成后自动尾帧 → 下一镜首帧。
 - [ ] 与现有画布节点互操作（分镜可落成图片 / 视频节点，或反向拾取）。
 
 ### Phase 3 — 批量与成片
 
-- [ ] 批量生成队列（进度、取消、失败重试）。
-- [ ] 成片拼接与导出。
-- [ ] 长片项目面板（挂画布侧栏或独立入口）。
+- [x] 批量生成队列（进度、取消、失败重试）。（串行批量 + 取消；失败镜头可单独重试）
+- [x] 成片拼接与导出。
+- [x] 长片项目面板（挂画布侧栏或独立入口）。（独立入口：`/longform` 长片工作台）
 
 ### Phase 4 — 增强（非 MVP）
 

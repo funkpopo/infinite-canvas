@@ -1,4 +1,4 @@
-import { FileText, ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
+import { Clapperboard, FileText, ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -15,6 +15,11 @@ export const navigationTools = [
         slug: "video",
         label: "视频创作台",
         icon: Video,
+    },
+    {
+        slug: "longform",
+        label: "长片工作台",
+        icon: Clapperboard,
     },
     {
         slug: "prompts",

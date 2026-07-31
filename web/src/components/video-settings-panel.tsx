@@ -160,7 +160,7 @@ function AgnesVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
                             </OptionPill>
                         ))}
                     </div>
-                    <div className="text-[11px] leading-4 opacity-60">普通：文生视频 / 单图生视频；关键帧：至少 2 张参考图</div>
+                    <div className="text-[11px] leading-4 opacity-60">普通：文生 / 单图生视频；关键帧：需首帧 + 尾帧共 2 张图，参考图顺序为「第 1 张=首帧、第 2 张=尾帧」</div>
                 </SettingGroup>
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">

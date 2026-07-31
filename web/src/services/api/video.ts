@@ -36,6 +36,14 @@ type SeedanceTask = {
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 
+/** 显式首尾帧；长片链路优先使用，顺序固定为 [首帧, 尾帧]。 */
+export type VideoFrameOptions = {
+    firstFrame?: ReferenceImage;
+    lastFrame?: ReferenceImage;
+};
+
+export type VideoTaskOptions = RequestOptions & VideoFrameOptions;
+
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes" | "plugin"; model: string; agnesVideoId?: string; agnesTaskId?: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
@@ -54,7 +62,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
     };
 }
 
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
+export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: VideoTaskOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
     const delayMs = task.provider === "seedance" || task.provider === "agnes" ? 5000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -68,22 +76,23 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     throw new Error("视频生成超时，请稍后重试");
 }
 
-export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
+export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: VideoTaskOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
-    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
+    const orderedReferences = await resolveOrderedReferenceImages(references, options);
+    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, orderedReferences, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "agnes") {
-        return createAgnesTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+        return createAgnesTask(requestConfig, selectedModel, prompt, orderedReferences, videoReferences, audioReferences, options);
     }
     if (isSeedanceVideoConfig(requestConfig)) {
-        return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+        return createSeedanceTask(requestConfig, selectedModel, prompt, orderedReferences, videoReferences, audioReferences, options);
     }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
     }
-    return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
+    return createOpenAIVideoTask(requestConfig, selectedModel, prompt, orderedReferences, options);
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
@@ -185,13 +194,17 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     }
 }
 
-async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createAgnesTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: VideoTaskOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 暂不支持参考视频或参考音频，请只保留参考图片");
-    const images = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesReferenceImageUrl(image)));
+    // 显式首尾帧优先；关键帧必须严格 2 图且顺序为 [首帧, 尾帧]。
+    const resolved = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveAgnesReferenceImageUrl(image)));
     const dimensions = resolveAgnesVideoDimensions(config.size, config.vquality);
     const frameRate = normalizeAgnesFrameRate(config.videoFrameRate);
-    const keyframes = images.length > 1 || normalizeAgnesVideoMode(config.agnesVideoMode) === "keyframes";
-    if (keyframes && images.length < 2) throw new Error("Agnes Video 关键帧模式至少需要 2 张参考图");
+    const explicitKeyframes = Boolean(options?.firstFrame && options?.lastFrame);
+    const keyframes = explicitKeyframes || resolved.length > 1 || normalizeAgnesVideoMode(config.agnesVideoMode) === "keyframes";
+    if (keyframes && resolved.length < 2) throw new Error("Agnes Video 关键帧模式需要首帧与尾帧共 2 张图（顺序：首帧 → 尾帧）");
+    // 关键帧只取前两张，避免无序多图歧义
+    const images = keyframes ? resolved.slice(0, 2) : resolved;
     // 关键帧走 extra_body；普通文/图生视频不强制 mode（文档可选）。
     const extra_body = keyframes ? { image: images, mode: "keyframes" } : undefined;
     const negativePrompt = config.videoNegativePrompt.trim();
@@ -586,6 +599,17 @@ async function resolveAgnesReferenceImageUrl(image: ReferenceImage) {
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl.startsWith("data:image/")) throw new Error("参考图读取失败，请换一张图片或重新上传");
     return dataUrl;
+}
+
+/**
+ * 长片/显式关键帧：优先 firstFrame + lastFrame 构造有序参考图。
+ * 仅 firstFrame 时作为单图图生视频；否则回退到传入的 references 顺序。
+ */
+async function resolveOrderedReferenceImages(references: ReferenceImage[], options?: VideoFrameOptions) {
+    if (options?.firstFrame && options?.lastFrame) return [options.firstFrame, options.lastFrame];
+    if (options?.firstFrame && !options?.lastFrame) return [options.firstFrame];
+    if (!options?.firstFrame && options?.lastFrame) throw new Error("指定尾帧时必须同时提供首帧（关键帧模式）");
+    return references;
 }
 
 function isPublicHttpUrl(value: string) {
