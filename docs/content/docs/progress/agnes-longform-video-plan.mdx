@@ -101,7 +101,7 @@ type LongformProject = {
   id: string;
   title: string;
   styleBible: string;          // 风格/调性统一描述
-  characterBible: string;      // 角色外貌与服装
+  characters: LongformCharacter[]; // 角色表（姓名 / 外貌）
   aspectRatio: string;         // 16:9 等，与 Agnes 对齐
   resolution: string;          // 480p / 720p / 1080p
   fps: number;
@@ -161,7 +161,7 @@ type MediaRef = {
 ### 2. 角色与风格锁定
 
 1. 用 Agnes Image 生成角色定妆 / 场景板，写入长片项目的参考资产。
-2. 每镜提示词自动拼接 `styleBible` + `characterBible` 前缀，减少跨镜漂移。
+2. 每镜提示词自动拼接 `styleBible` + 本镜出场角色外貌前缀，减少跨镜漂移。
 3. MVP 不做 LoRA；一致性主要靠**统一描述 + 首尾帧图**。
 
 ### 3. 首尾帧指定

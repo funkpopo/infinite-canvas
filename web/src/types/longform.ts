@@ -8,6 +8,15 @@ export type LongformMediaRef = {
 
 export type LongformShotStatus = "draft" | "framed" | "generating" | "ready" | "error";
 
+/** 项目级角色圣经条目，可多角色。 */
+export type LongformCharacter = {
+    id: string;
+    name: string;
+    /** 外貌、服装、年龄、标志性特征 */
+    appearance: string;
+    note?: string;
+};
+
 export type LongformShot = {
     id: string;
     index: number;
@@ -19,6 +28,12 @@ export type LongformShot = {
     durationSec: number;
     prompt: string;
     negativePrompt?: string;
+    /**
+     * 本镜出场角色 id 列表。
+     * - 有值：只注入这些角色（多人物项目里的单人特写等）
+     * - 空 / 缺省：按分镜文案自动匹配角色名；匹配不到则注入全部角色
+     */
+    characterIds?: string[];
     firstFrame?: LongformMediaRef;
     lastFrame?: LongformMediaRef;
     video?: LongformMediaRef;
@@ -33,8 +48,10 @@ export type LongformAssembleStatus = "idle" | "running" | "done" | "error";
 export type LongformProject = {
     id: string;
     title: string;
+    /** 全片统一风格，首帧与视频生成时强制前置 */
     styleBible: string;
-    characterBible: string;
+    /** 项目级角色表（多人），生成时按本镜出场注入 */
+    characters: LongformCharacter[];
     aspectRatio: string;
     resolution: string;
     fps: number;
@@ -61,4 +78,7 @@ export type LongformShotDraft = {
     durationSec?: number;
     prompt?: string;
     negativePrompt?: string;
+    /** 草稿里的角色名，入库时映射为 characterIds */
+    characterNames?: string[];
+    characterIds?: string[];
 };

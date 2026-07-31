@@ -1,4 +1,3 @@
-import { composeShotPrompt } from "@/lib/longform/script";
 import { extractVideoFrame, concatVideos } from "@/lib/media/ffmpeg-frames";
 import { requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoFrameOptions } from "@/services/api/video";
@@ -7,18 +6,33 @@ import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-s
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { LongformMediaRef, LongformProject, LongformShot } from "@/types/longform";
-import { SCRIPT_TO_SHOTS_SYSTEM, buildScriptToShotsUserMessage, parseLlmShotResponse } from "@/lib/longform/script";
+import { charactersToBibleText, composeGenerationPrompt, normalizeDurationSec } from "@/lib/longform/script";
 
-export async function structureScriptWithLlm(config: AiConfig, project: Pick<LongformProject, "scriptRaw" | "styleBible" | "characterBible">, onDelta?: (text: string) => void) {
-    const answer = await requestImageQuestion(
-        config,
-        [
-            { role: "system", content: SCRIPT_TO_SHOTS_SYSTEM },
-            { role: "user", content: buildScriptToShotsUserMessage({ script: project.scriptRaw, styleBible: project.styleBible, characterBible: project.characterBible }) },
-        ],
-        onDelta || (() => undefined),
-    );
-    return parseLlmShotResponse(answer);
+/**
+ * LLM 辅助撰写：按用户自己的要求润色/扩写剧本正文。
+ * 不在代码里内置分镜 schema 或长系统提示；结构化请用「解析导入」。
+ */
+export async function assistWriteLongform(
+    config: AiConfig,
+    input: {
+        /** 用户自己的撰写要求，可空则仅润色已有文稿 */
+        instruction?: string;
+        scriptRaw?: string;
+        styleBible?: string;
+        characters?: LongformProject["characters"];
+    },
+    onDelta?: (text: string) => void,
+) {
+    const instruction = (input.instruction || "").trim() || "请根据已有素材润色并扩写为可直接使用的长片剧本/分镜文案，人物出场写清楚。";
+    const chunks: string[] = [instruction, "直接输出正文，不要解释写作过程。"];
+    if (input.styleBible?.trim()) chunks.push(`风格参考：\n${input.styleBible.trim()}`);
+    const characterText = input.characters?.length ? charactersToBibleText(input.characters) : "";
+    if (characterText) chunks.push(`角色参考：\n${characterText}`);
+    if (input.scriptRaw?.trim()) chunks.push(`现有文稿：\n${input.scriptRaw.trim()}`);
+    if (chunks.length <= 2 && !input.scriptRaw?.trim()) {
+        throw new Error("请先填写撰写要求或现有文稿");
+    }
+    return requestImageQuestion(config, [{ role: "user", content: chunks.join("\n\n") }], onDelta || (() => undefined));
 }
 
 export async function mediaRefToReferenceImage(media: LongformMediaRef, name = "frame.jpg"): Promise<ReferenceImage> {
@@ -72,9 +86,9 @@ function buildImageConfig(config: AiConfig, project?: Pick<LongformProject, "asp
     };
 }
 
-/** 仅生成镜头首帧图，不触发出视频。 */
+/** 仅生成镜头首帧图，不触发出视频。风格/本镜角色圣经强制注入。 */
 export async function generateShotFirstFrame(config: AiConfig, project: LongformProject, shot: LongformShot, signal?: AbortSignal): Promise<LongformMediaRef> {
-    const prompt = composeShotPrompt(project.styleBible, project.characterBible, shot) || shot.prompt || shot.action;
+    const prompt = composeGenerationPrompt(project, shot, "image");
     if (!prompt.trim()) throw new Error("请先填写镜头动作或提示词");
     const imageConfig = buildImageConfig(config, project);
     const images = await requestGeneration(imageConfig, prompt, { signal });
@@ -121,12 +135,14 @@ async function dataUrlToBlob(dataUrl: string) {
 }
 
 function buildVideoConfig(config: AiConfig, project: LongformProject, shot: LongformShot): AiConfig {
+    // 严格按本镜 durationSec，默认 5s；不读全局 config.videoSeconds，避免整批被设成 18s
+    const durationSec = normalizeDurationSec(shot.durationSec);
     return {
         ...config,
         model: config.videoModel || config.model,
         size: project.aspectRatio || config.size,
         vquality: project.resolution || config.vquality,
-        videoSeconds: String(shot.durationSec || 5),
+        videoSeconds: String(durationSec),
         videoFrameRate: String(project.fps || 24),
         videoNegativePrompt: shot.negativePrompt || config.videoNegativePrompt,
         videoSeed: shot.seed != null ? String(shot.seed) : config.videoSeed,
@@ -135,7 +151,7 @@ function buildVideoConfig(config: AiConfig, project: LongformProject, shot: Long
 }
 
 export async function generateShotVideo(config: AiConfig, project: LongformProject, shot: LongformShot, options?: { signal?: AbortSignal; onStatus?: (text: string) => void }): Promise<LongformMediaRef> {
-    const prompt = composeShotPrompt(project.styleBible, project.characterBible, shot) || shot.prompt;
+    const prompt = composeGenerationPrompt(project, shot, "video");
     if (!prompt.trim()) throw new Error("请先填写镜头提示词");
     const videoConfig = buildVideoConfig(config, project, shot);
     const frames: VideoFrameOptions = {};

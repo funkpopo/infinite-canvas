@@ -3,8 +3,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { localForageStorage } from "@/lib/localforage-storage";
-import { createEmptyShot, parseScriptToShotDrafts } from "@/lib/longform/script";
-import type { LongformMediaRef, LongformProject, LongformShot, LongformShotDraft } from "@/types/longform";
+import { buildShotsFromDrafts, createEmptyCharacter, normalizeDurationSec, parseScriptToShotDrafts } from "@/lib/longform/script";
+import type { LongformCharacter, LongformMediaRef, LongformProject, LongformShot, LongformShotDraft } from "@/types/longform";
 
 const STORE_KEY = "infinite-canvas:longform_projects";
 
@@ -15,16 +15,42 @@ type LongformStore = {
     deleteProject: (id: string) => void;
     setActiveProject: (id: string | null) => void;
     updateProject: (id: string, patch: Partial<Omit<LongformProject, "id" | "createdAt" | "shots">>) => void;
+    setCharacters: (projectId: string, characters: LongformCharacter[]) => void;
     setShots: (projectId: string, shots: LongformShot[]) => void;
     updateShot: (projectId: string, shotId: string, patch: Partial<LongformShot>) => void;
     addShot: (projectId: string, draft?: LongformShotDraft) => string;
     removeShot: (projectId: string, shotId: string) => void;
     importScript: (projectId: string, raw: string, source?: LongformProject["scriptSource"]) => number;
-    replaceShotsFromDrafts: (projectId: string, drafts: LongformShotDraft[], meta?: { styleBible?: string; characterBible?: string; scriptSource?: LongformProject["scriptSource"]; scriptRaw?: string }) => void;
+    replaceShotsFromDrafts: (
+        projectId: string,
+        drafts: LongformShotDraft[],
+        meta?: {
+            styleBible?: string;
+            characters?: LongformCharacter[];
+            scriptSource?: LongformProject["scriptSource"];
+            scriptRaw?: string;
+        },
+    ) => void;
     setShotFrame: (projectId: string, shotId: string, role: "firstFrame" | "lastFrame", media?: LongformMediaRef) => void;
     setShotVideo: (projectId: string, shotId: string, video?: LongformMediaRef, status?: LongformShot["status"], error?: string) => void;
     setAssemble: (projectId: string, assemble: LongformProject["assemble"]) => void;
 };
+
+function normalizeProject(raw: LongformProject & { characterBible?: string }): LongformProject {
+    // 丢弃旧字段 characterBible，不再回填/迁移
+    const { characterBible: _legacy, ...project } = raw;
+    const characters = Array.isArray(project.characters) ? project.characters.map((item) => createEmptyCharacter(item)) : [];
+    return {
+        ...project,
+        characters,
+        shots: (project.shots || []).map((shot, index) => ({
+            ...shot,
+            index,
+            durationSec: normalizeDurationSec(shot.durationSec),
+            characterIds: shot.characterIds?.length ? shot.characterIds : undefined,
+        })),
+    };
+}
 
 function touch(project: LongformProject, patch: Partial<LongformProject> = {}): LongformProject {
     return { ...project, ...patch, updatedAt: Date.now() };
@@ -45,14 +71,14 @@ export const useLongformStore = create<LongformStore>()(
                     id: nanoid(),
                     title,
                     styleBible: "",
-                    characterBible: "",
+                    characters: [],
                     aspectRatio: "16:9",
                     resolution: "720",
                     fps: 24,
                     scriptSource: "manual",
                     scriptRaw: "",
                     chainMode: true,
-                    shots: [createEmptyShot(0), createEmptyShot(1), createEmptyShot(2)],
+                    shots: [],
                     assemble: { status: "idle" },
                     createdAt: now,
                     updatedAt: now,
@@ -69,8 +95,16 @@ export const useLongformStore = create<LongformStore>()(
             setActiveProject: (id) => set({ activeProjectId: id }),
             updateProject: (id, patch) => {
                 set((state) => ({
-                    projects: state.projects.map((project) => (project.id === id ? touch(project, patch) : project)),
+                    projects: state.projects.map((project) => {
+                        if (project.id !== id) return project;
+                        const next = touch(project, patch);
+                        if (patch.characters) next.characters = patch.characters.map((item) => createEmptyCharacter(item));
+                        return next;
+                    }),
                 }));
+            },
+            setCharacters: (projectId, characters) => {
+                get().updateProject(projectId, { characters: characters.map((item) => createEmptyCharacter(item)) });
             },
             setShots: (projectId, shots) => {
                 set((state) => ({
@@ -82,7 +116,12 @@ export const useLongformStore = create<LongformStore>()(
                     projects: state.projects.map((project) => {
                         if (project.id !== projectId) return project;
                         return touch(project, {
-                            shots: project.shots.map((shot) => (shot.id === shotId ? { ...shot, ...patch } : shot)),
+                            shots: project.shots.map((shot) => {
+                                if (shot.id !== shotId) return shot;
+                                const next = { ...shot, ...patch };
+                                if (patch.durationSec != null) next.durationSec = normalizeDurationSec(patch.durationSec);
+                                return next;
+                            }),
                         });
                     }),
                 }));
@@ -92,8 +131,8 @@ export const useLongformStore = create<LongformStore>()(
                 set((state) => ({
                     projects: state.projects.map((project) => {
                         if (project.id !== projectId) return project;
-                        const shot = { ...createEmptyShot(project.shots.length, draft), id };
-                        return touch(project, { shots: [...project.shots, shot] });
+                        const [shot] = buildShotsFromDrafts([draft || {}], project.characters || []);
+                        return touch(project, { shots: [...project.shots, { ...shot, id, index: project.shots.length }] });
                     }),
                 }));
                 return id;
@@ -113,16 +152,20 @@ export const useLongformStore = create<LongformStore>()(
                 return drafts.length;
             },
             replaceShotsFromDrafts: (projectId, drafts, meta = {}) => {
-                const shots = drafts.map((draft, index) => createEmptyShot(index, draft));
                 set((state) => ({
                     projects: state.projects.map((project) => {
                         if (project.id !== projectId) return project;
+                        const characters = meta.characters?.length
+                            ? meta.characters.map((item) => createEmptyCharacter(item))
+                            : project.characters || [];
+                        const lockCast = Boolean(meta.characters?.length) || drafts.some((draft) => draft.characterNames?.length);
+                        const shots = buildShotsFromDrafts(drafts, characters, { lockCast });
                         return touch(project, {
                             shots,
                             scriptSource: meta.scriptSource || project.scriptSource,
                             scriptRaw: meta.scriptRaw ?? project.scriptRaw,
                             styleBible: meta.styleBible?.trim() || project.styleBible,
-                            characterBible: meta.characterBible?.trim() || project.characterBible,
+                            characters,
                             assemble: { status: "idle" },
                         });
                     }),
@@ -152,10 +195,20 @@ export const useLongformStore = create<LongformStore>()(
             name: STORE_KEY,
             storage: createJSONStorage(() => localForageStorage),
             partialize: (state) => ({ projects: state.projects, activeProjectId: state.activeProjectId }),
+            merge: (persisted, current) => {
+                const data = (persisted || {}) as Partial<LongformStore>;
+                const projects = Array.isArray(data.projects) ? data.projects.map((project) => normalizeProject(project as LongformProject)) : current.projects;
+                return {
+                    ...current,
+                    ...data,
+                    projects,
+                    activeProjectId: data.activeProjectId ?? current.activeProjectId,
+                };
+            },
         },
     ),
 );
 
 export function selectActiveLongformProject(state: { projects: LongformProject[]; activeProjectId: string | null }) {
-    return state.projects.find((project) => project.id === state.activeProjectId) || null;
+    return state.projects.find((item) => item.id === state.activeProjectId) || null;
 }
