@@ -3,7 +3,7 @@ import type { ServerResponse } from "node:http";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CanvasSession } from "./canvas-session.js";
+import { CanvasSession } from "./session.js";
 
 test("MCP 读取当前激活网页的画布", async (t) => {
     const session = new CanvasSession();
@@ -251,38 +251,46 @@ test("closing the bound client falls back to the active client", async (t) => {
     assert.deepEqual(await result, { ok: true });
 });
 
+/** 创建用于测试的画布 SSE 连接。 */
 function connect(session: CanvasSession, clientId: string) {
     const response = new FakeSseResponse();
     session.openEvents(new URL(`http://127.0.0.1/events?clientId=${clientId}`), response as unknown as ServerResponse);
     return response;
 }
 
+/** 创建最小画布快照。 */
 function snapshot(projectId: string) {
     return { projectId, title: projectId, nodes: [], connections: [], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
 }
 
+/** 安全读取测试对象字段。 */
 function field(value: unknown, key: string) {
     return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+/** 模拟 Node SSE 响应并提供事件读取能力。 */
 class FakeSseResponse extends EventEmitter {
     private chunks: string[] = [];
 
+    /** 模拟写入响应头。 */
     writeHead() {
         return this;
     }
 
+    /** 保存写入的 SSE 文本块。 */
     write(chunk: string) {
         this.chunks.push(chunk);
         return true;
     }
 
+    /** 读取指定类型的首个 SSE 事件数据。 */
     event(type: string) {
         const chunk = this.chunks.find((item) => item.startsWith(`event: ${type}\n`));
         const data = chunk?.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
         return data ? (JSON.parse(data) as unknown) : undefined;
     }
 
+    /** 触发连接关闭事件。 */
     close() {
         this.emit("close");
     }
