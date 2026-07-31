@@ -1,0 +1,333 @@
+---
+title: Agnes 长片生产规划
+description: 基于现有 Agnes 渠道，规划剧本驱动、首尾帧控制与分镜拼接的长片生产流程
+---
+
+# Agnes 长片生产规划
+
+本文档规划在**当前 Agnes 单镜生成能力**之上，实现可落地的 AI 长片（多镜头叙事视频）生产流程。目标不是“一次提示词生成整部电影”，而是复用业界成熟管线：**剧本 → 分镜 → 首尾帧 → 短镜生成 → 衔接 → 拼接**。
+
+## 目标
+
+- 用户可通过 Agnes 渠道（文本 + 图片 + 视频）完成从剧本到成片的长片生产。
+- 支持剧本**编写**与**导入**，并结构化为可执行分镜列表。
+- 每个镜头可指定**首帧 / 尾帧**，并支持从已有视频用 **ffmpeg** 抽取首尾帧用于衔接。
+- 长片由多段短视频（3–18 秒，受 Agnes `num_frames ≤ 441` 约束）串联而成，保持角色、风格、场景连续性。
+- 优先沿用现有画布节点、Agnes API 封装与本地存储，不引入云端项目同步假设。
+
+## 现状基础（可直接复用）
+
+| 能力 | 现状 | 文件 / 入口 |
+| --- | --- | --- |
+| Agnes 文本 | `agnes-2.0-flash`，chat/completions | `web/src/services/api/image.ts`（文本客户端）、配置 store |
+| Agnes 图片 | `agnes-image-2.1-flash`，文生图 / 图生图 | `web/src/services/api/image.ts` |
+| Agnes 视频 | `agnes-video-v2.0`，文生 / 图生 / **关键帧** | `web/src/services/api/video.ts` |
+| 关键帧提交 | 多图 → `extra_body.image` + `mode: "keyframes"` | `createAgnesTask` |
+| 单镜 UI | 视频页 + 画布视频节点设置（分辨率、比例、时长、fps、mode） | `video-settings-panel.tsx`、画布生成链路 |
+| 视频首帧预览 | 浏览器 `captureVideoPoster`（仅首帧、缩略图级） | `web/src/lib/image-utils.ts` |
+| 媒体本地化 | localforage / 同源代理（含 `/agnes-outputs/`） | `file-storage.ts` 等 |
+
+**尚缺（本规划要补齐）：**
+
+- 剧本 / 分镜数据结构与导入导出
+- 显式「首帧 / 尾帧」角色区分（当前关键帧只是无序多图数组）
+- 可靠的视频**尾帧**抽取与高清首尾帧（生产级，不靠缩略图）
+- 镜头链式生成（上镜尾帧 → 下镜首帧）
+- 多段视频拼接成片
+- 长片项目级 UI / 工作流编排
+
+## 业界参考流程（成熟做法归纳）
+
+主流 AI 长片工具（Kling / Runway / Luma / 各类 storyboard-to-video 工作流）普遍采用分层管线，而不是端到端单次生成：
+
+```txt
+创意梗概
+  → LLM 写剧本 / 分场
+  → 结构化分镜表（镜头、时长、运镜、对白、角色）
+  → 角色与风格圣经（固定参考图 / 描述）
+  → 每镜生成首帧（+ 可选尾帧）
+  → I2V / 首尾帧视频模型生成短镜
+  → 上镜尾帧衔接下镜首帧（链式连续性）
+  → 配音 / BGM / SFX（可后置）
+  → 时间线拼接 + 调色 / 转场
+  → 人工挑镜与局部重生成
+```
+
+关键共识：
+
+1. **控制力主要来自剧本结构 + 首尾帧**，而不是更长的单次视频。
+2. **镜头宜短**（数秒到十余秒），质量与可控性显著好于一次性长生成。
+3. **连续性靠参考图与帧衔接**：尾帧作下一镜首帧，是最稳的跨镜一致性手段。
+4. **人在回路**：分镜确认、挑镜、局部重生成比全自动更重要。
+5. **拼接是后处理**：生成模型负责单镜，成片由编辑 / ffmpeg 完成。
+
+本项目以 Agnes 为生成引擎，按上述管线裁剪为可实现的产品能力。
+
+## 产品形态建议
+
+### 推荐：画布上的「长片项目」工作流（优先）
+
+不新开独立 App，而是在画布中增加**长片 / 分镜编排**能力，节点与连线表达管线：
+
+```txt
+[剧本节点] → [分镜列表] → 每镜:
+  [首帧图] + [尾帧图(可选)] + [镜头提示词]
+       ↓
+  [Agnes 关键帧 / 图生视频] → [镜头视频]
+       ↓（抽尾帧）
+  下一镜首帧 / 衔接
+       ↓
+  [成片节点：ffmpeg 拼接]
+```
+
+理由：
+
+- 已有文本 / 图片 / 视频节点与连线，天然适合分镜可视化。
+- Agnes 文本写剧本、图片出关键帧、视频出短镜，三能力已齐。
+- 用户可对单镜局部重生成，符合「人在回路」。
+
+### 备选：视频页「长片模式」向导
+
+适合线性向导（导入剧本 → 确认分镜 → 批量出帧 → 批量出视频 → 导出成片）。可作为第二入口，复用同一数据模型与服务层。
+
+**MVP 建议只做画布工作流 + 底层服务；向导可后置。**
+
+## 核心数据模型（建议）
+
+本地持久化（localforage），不写服务端 schema。
+
+```ts
+type LongformProject = {
+  id: string;
+  title: string;
+  styleBible: string;          // 风格/调性统一描述
+  characterBible: string;      // 角色外貌与服装
+  aspectRatio: string;         // 16:9 等，与 Agnes 对齐
+  resolution: string;          // 480p / 720p / 1080p
+  fps: number;
+  scriptSource: "manual" | "import" | "generated";
+  scriptRaw: string;           // 原始剧本全文
+  shots: LongformShot[];
+  assemble?: {
+    videoUrl?: string;
+    storageKey?: string;
+    status: "idle" | "running" | "done" | "error";
+  };
+};
+
+type LongformShot = {
+  id: string;
+  index: number;
+  title: string;
+  scene: string;
+  action: string;              // 画面动作
+  dialogue?: string;
+  camera?: string;             // 运镜
+  durationSec: number;         // 3/5/10/18，映射 num_frames
+  prompt: string;              // 最终发给 Agnes Video 的提示词
+  negativePrompt?: string;
+  firstFrame?: MediaRef;       // 首帧图
+  lastFrame?: MediaRef;        // 尾帧图（关键帧模式）
+  video?: MediaRef;            // 生成结果
+  status: "draft" | "framed" | "generating" | "ready" | "error";
+  seed?: number;
+  chainFromShotId?: string;    // 若首帧来自上一镜尾帧
+};
+
+type MediaRef = {
+  storageKey?: string;
+  url?: string;
+  width?: number;
+  height?: number;
+};
+```
+
+剧本导入格式建议同时支持：
+
+- **纯文本 / Markdown**（场次、对白自由写，LLM 再结构化）
+- **结构化 JSON / CSV**（直接映射 `shots[]`）
+- 后续可扩展 Fountain 等专业剧本格式（非 MVP）
+
+## 端到端流程设计
+
+### 1. 剧本编写与导入
+
+1. 用户粘贴 / 上传剧本，或用 Agnes 文本模型按模板生成：
+   - 输入：题材、时长目标、风格、角色设定
+   - 输出：结构化 JSON（场次 → 镜头列表），并保留 `scriptRaw` 原文
+2. 提供「剧本 → 分镜」一键拆解提示词模板（固定 schema，便于解析）。
+3. 导入后进入分镜表 UI：可编辑每镜时长、提示词、是否启用尾帧。
+
+### 2. 角色与风格锁定
+
+1. 用 Agnes Image 生成角色定妆 / 场景板，写入长片项目的参考资产。
+2. 每镜提示词自动拼接 `styleBible` + `characterBible` 前缀，减少跨镜漂移。
+3. MVP 不做 LoRA；一致性主要靠**统一描述 + 首尾帧图**。
+
+### 3. 首尾帧指定
+
+每镜支持三种来源：
+
+| 来源 | 说明 |
+| --- | --- |
+| 画布选图 / 素材库 | 指定已有图片为该镜首帧或尾帧 |
+| Agnes 文生图 / 图生图 | 按镜头 prompt 生成首帧；尾帧可再生成或由动作描述衍生 |
+| 视频抽帧 | 从已有镜头视频抽取首帧 / 尾帧（见下一节） |
+
+与 Agnes 对接规则：
+
+- **仅首帧** → 图生视频：顶层 `image` + 镜头 prompt（`ti2vid` 语义，不强制 mode）
+- **首帧 + 尾帧** → 关键帧：`extra_body.image: [first, last]` + `mode: "keyframes"`
+- **无帧** → 文生视频（仅适合空镜 / 气氛镜，长片中应少用）
+
+实现时要在 UI 与 API 层**明确 first/last 顺序**，不要依赖「参考图连接顺序」的隐式约定；当前 `createAgnesTask` 的多图关键帧可保留，但长片链路应显式构造 `[首帧, 尾帧]`。
+
+### 4. ffmpeg 获取视频首尾帧
+
+现有 `captureVideoPoster` 只适合缩略图首帧，不适合生产级尾帧与拼接前处理。
+
+**推荐方案（按优先级）：**
+
+1. **浏览器内 `ffmpeg.wasm`（MVP 主路径）**
+   - 从本地 Blob / 已下载视频抽帧，不依赖本机安装。
+   - 命令示意：
+     - 首帧：`ffmpeg -i input.mp4 -vf "select=eq(n\,0)" -vframes 1 first.jpg`
+     - 尾帧：`ffmpeg -sseof -0.05 -i input.mp4 -vframes 1 last.jpg`（或按 duration 定位）
+   - 抽帧结果写入图片节点 / 素材，并回填 `LongformShot.firstFrame|lastFrame`。
+2. **本机 ffmpeg（可选增强，挂 canvas-agent）**
+   - 大文件、批量、拼接更稳；适合本地 Agent 用户。
+   - 非 MVP 阻断项。
+3. **纯 HTMLVideoElement seek**
+   - 可作轻量 fallback；尾帧 seek 与 CORS 不稳定，不作为主路径。
+
+封装建议：
+
+```ts
+// web/src/lib/media/ffmpeg-frames.ts（示意）
+extractVideoFrame(file: Blob, position: "first" | "last" | number): Promise<Blob>
+concatVideos(clips: Blob[], options?: { transitions?: "none" | "crossfade" }): Promise<Blob>
+```
+
+依赖：`@ffmpeg/ffmpeg` + `@ffmpeg/util`（或项目选定的成熟 wasm 封装）。按 AGENTS 原则用成熟库，不手写 demux。
+
+### 5. 分镜视频生成（Agnes）
+
+对每个 `LongformShot`：
+
+1. 组装 prompt = 风格圣经 + 角色圣经 + 镜头 action/camera/dialogue 摘要。
+2. 按是否有尾帧选择 ti2vid / keyframes。
+3. 调用现有 `createVideoGenerationTask` / `pollVideoGenerationTask`（provider `agnes`）。
+4. 成功后本地化视频，更新 shot 状态。
+5. 可选：**自动抽尾帧** → 写入下一镜 `firstFrame`（若开启「链式衔接」）。
+
+批量策略：
+
+- 默认串行或小并发（2），避免浏览器与 API 限流打满。
+- 失败镜头可单独重试，不阻断整片。
+- 支持「只生成未完成镜头」。
+
+### 6. 成片拼接
+
+1. 按 `shots` 顺序收集已就绪视频 Blob。
+2. ffmpeg.wasm concat demuxer（同编码直接 concat）或统一 re-encode。
+3. 输出成片节点 / 下载 mp4。
+4. MVP **不做复杂转场**；仅硬切。转场、BGM、字幕列为后续。
+
+### 7. 人工审片回路
+
+- 分镜表：标记通过 / 需重做。
+- 单镜：换 seed、改 prompt、换首尾帧后重生成。
+- 链式镜头重生成时，可选择是否刷新下游首帧。
+
+## 分阶段实施
+
+### Phase 0 — 能力补齐（底层，不依赖完整 UI）
+
+- [ ] 明确 Agnes 关键帧「首帧 / 尾帧」参数约定与校验（2 图顺序）。
+- [ ] 视频设置 / 画布：支持显式指定首帧图、尾帧图（而不只是多参考图）。
+- [ ] 接入 `ffmpeg.wasm`：`extractVideoFrame`（first/last）+ 基础 `concatVideos`。
+- [ ] 单测级手动验证：本地 mp4 抽首尾帧、两段视频硬切拼接。
+
+### Phase 1 — 剧本与分镜数据
+
+- [ ] `LongformProject` / `LongformShot` 类型与 localforage 存储。
+- [ ] 剧本导入（Markdown / 纯文本 / JSON）。
+- [ ] Agnes 文本「剧本 → 结构化分镜」提示词模板 + 解析容错。
+- [ ] 分镜表基础 UI（列表编辑：时长、prompt、首尾帧槽位）。
+
+### Phase 2 — 单镜生产闭环
+
+- [ ] 从分镜一键：生成首帧（Agnes Image）→ 可选生成尾帧 → Agnes Video。
+- [ ] 从视频节点 / 分镜结果「提取首帧 / 尾帧」写入图片。
+- [ ] 链式模式：生成完成后自动尾帧 → 下一镜首帧。
+- [ ] 与现有画布节点互操作（分镜可落成图片 / 视频节点，或反向拾取）。
+
+### Phase 3 — 批量与成片
+
+- [ ] 批量生成队列（进度、取消、失败重试）。
+- [ ] 成片拼接与导出。
+- [ ] 长片项目面板（挂画布侧栏或独立入口）。
+
+### Phase 4 — 增强（非 MVP）
+
+- [ ] 对白 TTS + 简单字幕轨。
+- [ ] BGM / 音量 ducking。
+- [ ] 转场（叠化）、统一调色查找表。
+- [ ] 本机 ffmpeg 加速（canvas-agent）。
+- [ ] 视频页「长片向导」第二入口。
+- [ ] 多角色参考图槽位、场景板库。
+- [ ] Agent 工具：`longform.*` 让本地 Agent 编排长片。
+
+## 与现有代码的衔接点
+
+| 模块 | 改动方向 |
+| --- | --- |
+| `services/api/video.ts` | 长片调用可复用；可选增加 `firstFrame`/`lastFrame` 显式入参，避免依赖 references 顺序 |
+| `services/api/image.ts` | 分镜首尾帧生成复用 Agnes Image |
+| `video-settings-panel.tsx` | 关键帧模式下展示「首帧 / 尾帧」槽位说明 |
+| `lib/image-utils.ts` | 保留 poster；生产抽帧走新 `ffmpeg-frames` |
+| `types/canvas.ts` / store | 长片项目可独立 store，或挂在 canvas project metadata |
+| 画布生成链路 `project.tsx` | 单镜生成已通；批量 / 链式在长片编排层调用同一 API |
+| 文档 | 完成后：todo → pending-test → features；本规划页保留为设计依据 |
+
+## 技术风险与对策
+
+| 风险 | 对策 |
+| --- | --- |
+| Agnes 单段最长约 18s（441 帧约束） | 产品定位为「短镜拼接长片」，UI 写清上限 |
+| 跨镜角色漂移 | 强制风格/角色圣经 + 首尾帧衔接；少用纯文生视频 |
+| ffmpeg.wasm 体积与性能 | 懒加载；大片拼接可提示本机导出后外部剪辑；可选本机 ffmpeg |
+| 浏览器内存（多镜原片） | 镜头视频及时落盘 storageKey，内存只保留必要 Blob |
+| 关键帧 API 对图数量/语义 | 严格 2 图首尾；中间关键帧留到后续若文档支持 |
+| 剧本 LLM 输出不稳定 | 固定 JSON schema + 校验 + 允许手工改分镜表 |
+| CORS / 远程视频抽帧 | 先本地化再抽帧（沿用现有 download + 代理策略） |
+
+## MVP 验收标准
+
+1. 可导入或生成一份短剧本，并得到 ≥3 条可编辑分镜。
+2. 可为第 1 镜指定首帧（上传或 Agnes 出图），生成 Agnes 视频。
+3. 可从该视频用 ffmpeg 抽出尾帧，并设为第 2 镜首帧后生成第 2 镜。
+4. 可为某一镜同时指定首帧 + 尾帧，走 Agnes `keyframes` 成功出片。
+5. 可将已完成镜头按顺序拼接为一个可下载 mp4。
+6. 全程使用 Agnes 渠道配置（Base URL / API Key），数据仅存浏览器本地。
+
+## 明确不做（本规划范围外）
+
+- 云端长片项目协作与多端实时同步。
+- 一次 API 调用生成数分钟连贯电影。
+- 专业 NLE（多轨精剪、关键帧动画曲线编辑器）。
+- 训练角色 LoRA / 定制模型。
+- 非 Agnes 渠道的长片专属适配（底层抽帧与拼接可通用，但生成编排先打通 Agnes）。
+
+## 建议落地顺序（开发排期视角）
+
+1. **ffmpeg 抽帧 + 拼接工具库**（不依赖产品 UI，先可在控制台/临时页验证）。
+2. **Agnes 首尾帧显式 API 封装**。
+3. **分镜数据模型 + 导入 / LLM 拆解**。
+4. **分镜表 UI + 单镜生成**。
+5. **链式衔接 + 批量队列**。
+6. **成片导出 + 文档与待测清单**。
+
+---
+
+详细任务勾选以本文 Phase 0–4 为准；总 TODO 入口见 [TODO](/docs/progress/todo)。

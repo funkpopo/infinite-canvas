@@ -34,6 +34,7 @@
 - [更新日志](/docs/progress/changelog)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
+- [Agnes 长片生产规划](/docs/progress/agnes-longform-video-plan)
 
 ## 说明
 
