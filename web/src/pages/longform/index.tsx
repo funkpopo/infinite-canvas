@@ -1,6 +1,6 @@
-import { Clapperboard, Download, Film, ImagePlus, LoaderCircle, Plus, Sparkles, Trash2, Upload, Video } from "lucide-react";
+import { ChevronDown, Clapperboard, Download, Film, ImagePlus, LoaderCircle, Plus, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Empty, Input, InputNumber, Select, Switch, Tag, Typography } from "antd";
+import { App, Button, Empty, Input, InputNumber, Select, Switch, Tag } from "antd";
 import { saveAs } from "file-saver";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -104,6 +104,7 @@ export default function LongformPage() {
         const readyForVideo = selectShotsForVideo(shots, "framed").length;
         return { total, withFrame, ready, missingFrames, readyForVideo };
     }, [project]);
+    const projectCharacters = useMemo(() => (project ? resolveProjectCharacters(project) : []), [project]);
 
     /** 流程阶段：1 分镜 → 2 首帧 → 3 视频 → 4 成片 */
     const workflowStep = useMemo(() => {
@@ -605,8 +606,8 @@ export default function LongformPage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-6 pb-16">
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 pb-16 lg:px-6">
             <input ref={frameInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void onFrameFile(event.target.files)} />
             <AssetPickerModal
                 open={assetPickerOpen}
@@ -628,19 +629,19 @@ export default function LongformPage() {
                 onClose={() => setAssetPickerOpen(false)}
             />
 
-            <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                    <div className="flex items-center gap-2 text-stone-950 dark:text-stone-100">
-                        <Clapperboard className="size-5" />
-                        <Typography.Title level={3} className="!mb-0">
-                            长片工作台
-                        </Typography.Title>
-                    </div>
-                    <Typography.Paragraph type="secondary" className="!mb-0 !mt-1">
-                        推荐流程：剧本分镜 → 批量出首帧（人工审帧）→ 批量出视频 → 拼接成片
-                    </Typography.Paragraph>
+            <header className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                    <Clapperboard className="size-5 shrink-0" />
+                    <h1 className="text-lg font-semibold text-stone-950 dark:text-stone-100">长片工作台</h1>
+                    <Select
+                        className="min-w-44 max-w-72"
+                        value={activeProjectId || undefined}
+                        placeholder="选择项目"
+                        options={projects.map((item) => ({ value: item.id, label: `${item.title} · ${item.shots.length} 镜` }))}
+                        onChange={setActiveProject}
+                    />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1">
                     <Button icon={<Plus className="size-4" />} onClick={handleCreate}>
                         新建项目
                     </Button>
@@ -650,30 +651,11 @@ export default function LongformPage() {
                         </Button>
                     ) : null}
                 </div>
-            </div>
+            </header>
 
-            <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-                <aside className="space-y-2 rounded-2xl border border-stone-200 p-3 dark:border-stone-800">
-                    <div className="px-1 text-xs font-medium text-stone-500">项目列表</div>
-                    {projects.length ? (
-                        projects.map((item) => (
-                            <button
-                                key={item.id}
-                                type="button"
-                                className={`flex w-full flex-col rounded-xl px-3 py-2 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10 ${item.id === activeProjectId ? "bg-black/5 dark:bg-white/10" : ""}`}
-                                onClick={() => setActiveProject(item.id)}
-                            >
-                                <span className="truncate font-medium text-stone-900 dark:text-stone-100">{item.title}</span>
-                                <span className="text-xs text-stone-500">{item.shots.length} 镜 · {item.shots.filter((s) => s.status === "ready").length} 完成</span>
-                            </button>
-                        ))
-                    ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无项目" />
-                    )}
-                </aside>
-
+            <div>
                 {!project ? (
-                    <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-dashed border-stone-300 dark:border-stone-700">
+                    <div className="flex min-h-[520px] items-center justify-center border-y border-dashed border-stone-300 dark:border-stone-700">
                         <Empty description="创建或选择一个长片项目">
                             <Button type="primary" icon={<Plus className="size-4" />} onClick={handleCreate}>
                                 新建长片
@@ -681,8 +663,39 @@ export default function LongformPage() {
                         </Empty>
                     </div>
                 ) : (
-                    <div className="space-y-5">
-                        <section className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
+                    <div className="space-y-4">
+                        <div className="sticky top-0 z-20 -mx-4 border-y border-stone-200 bg-background/95 px-4 py-3 backdrop-blur dark:border-stone-800 lg:-mx-6 lg:px-6">
+                            <WorkflowSteps
+                                step={workflowStep}
+                                stats={shotStats}
+                                onBatchFrames={() => handleBatchFirstFrames("missing")}
+                                onBatchFramesAll={() => handleBatchFirstFrames("all")}
+                                onBatchVideos={handleBatchVideos}
+                                onAssemble={() => void handleAssemble()}
+                                onDownload={() => void handleDownloadAssemble()}
+                                onCancel={cancelRunning}
+                                batchKind={batchKind}
+                                assembleStatus={project.assemble?.status}
+                                canDownload={project.assemble?.status === "done"}
+                            />
+                            {statusText ? (
+                                <div className="mt-2 flex items-center gap-2 text-xs text-stone-500">
+                                    <LoaderCircle className="size-3.5 animate-spin" />
+                                    {statusText}
+                                </div>
+                            ) : null}
+                        </div>
+
+                        <details className="group border-b border-stone-200 pb-4 dark:border-stone-800">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-1">
+                                <div className="flex items-center gap-2">
+                                    <Settings2 className="size-4 text-stone-500" />
+                                    <span className="text-sm font-medium">项目设置</span>
+                                    <span className="text-xs text-stone-400">{project.aspectRatio} · {project.resolution}p · {project.fps}fps · {projectCharacters.length} 角色</span>
+                                </div>
+                                <ChevronDown className="size-4 text-stone-400 transition group-open:rotate-180" />
+                            </summary>
+                            <div className="mt-4 space-y-4">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <label className="space-y-1 text-sm">
                                     <span className="text-stone-500">标题</span>
@@ -704,7 +717,7 @@ export default function LongformPage() {
                                 </div>
                             </div>
                             <label className="space-y-1 text-sm">
-                                <span className="text-stone-500">风格圣经（强制注入每镜首帧与视频）</span>
+                                <span className="text-stone-500">全片风格</span>
                                 <Input.TextArea
                                     rows={2}
                                     value={project.styleBible}
@@ -720,9 +733,8 @@ export default function LongformPage() {
                                         loading={isGeneratingStyle}
                                         onClick={() => void handleGenerateStyleBible()}
                                     >
-                                        随机生成风格圣经
+                                        随机生成
                                     </Button>
-                                    <span className="text-xs text-stone-400">或点选下方预设场景</span>
                                 </div>
                                 <div className="flex flex-wrap gap-1.5">
                                     {STYLE_PRESETS.map((preset) => (
@@ -739,16 +751,15 @@ export default function LongformPage() {
                                 </div>
                             </div>
                             <CharacterBibleEditor
-                                characters={resolveProjectCharacters(project)}
+                                characters={projectCharacters}
                                 onChange={(characters) => setCharacters(project.id, characters)}
                                 onOpenAssetPicker={() => setAssetPickerOpen(true)}
                                 isParsing={isParsingImage}
                             />
                             <div className="flex flex-wrap items-center gap-4">
                                 <div className="flex items-center gap-2 text-sm">
-                                    <span className="text-stone-500">链式衔接</span>
+                                    <span className="text-stone-500">自动衔接下镜</span>
                                     <Switch checked={project.chainMode} onChange={(checked) => updateProject(project.id, { chainMode: checked })} />
-                                    <span className="text-xs text-stone-400">出视频后抽尾帧；仅当下镜尚无首帧时写入</span>
                                 </div>
                             </div>
                             <div className="grid gap-3 md:grid-cols-2">
@@ -761,11 +772,13 @@ export default function LongformPage() {
                                     <ModelPicker config={effectiveConfig} value={videoModel} capability="video" onChange={(value) => updateConfig("videoModel", value)} fullWidth />
                                 </div>
                             </div>
-                        </section>
+                            </div>
+                        </details>
 
-                        <section className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
+                        <section className="grid gap-4 border-b border-stone-200 pb-4 dark:border-stone-800 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,.5fr)]">
+                            <div className="space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-sm font-medium text-stone-900 dark:text-stone-100">① 剧本与分镜</div>
+                                <div className="text-sm font-medium text-stone-900 dark:text-stone-100">剧本</div>
                                 <div className="flex flex-wrap gap-2">
                                     <Button type="primary" icon={<Sparkles className="size-4" />} loading={assisting} onClick={() => void handleAssistWrite()}>
                                         LLM 辅助撰写
@@ -775,104 +788,59 @@ export default function LongformPage() {
                                     </Button>
                                 </div>
                             </div>
-                            <div className="text-xs leading-5 text-stone-500">
-                                辅助撰写只扩写/润色正文（要求由你填写）；「解析导入」再本地拆成角色与分镜表。风格/角色圣经仍会在出首帧与出视频时自动注入。
-                            </div>
                             <Input.TextArea
-                                rows={2}
-                                value={assistInstruction}
-                                placeholder="撰写要求（可选）。例如：扩成 6 个分镜，写清小明/小红出场；雨夜悬疑风格"
-                                onChange={(event) => setAssistInstruction(event.target.value)}
-                            />
-                            <Input.TextArea
-                                rows={6}
+                                autoSize={{ minRows: 8, maxRows: 18 }}
                                 value={project.scriptRaw}
                                 placeholder={"粘贴或撰写剧本 / Markdown / JSON。例如：\n## 镜头 1\n场景：雨夜街道\n动作：小明撑伞转身\n角色：小明\n\n或 JSON：{ \"characters\": [...], \"shots\": [...] }"}
                                 onChange={(event) => updateProject(project.id, { scriptRaw: event.target.value })}
                             />
+                            </div>
+                            <div className="space-y-2 lg:pt-9">
+                                <Input.TextArea
+                                    autoSize={{ minRows: 3, maxRows: 8 }}
+                                    value={assistInstruction}
+                                    placeholder="可选：告诉 LLM 如何改写，例如扩成 12 镜、加强悬疑感"
+                                    onChange={(event) => setAssistInstruction(event.target.value)}
+                                />
+                                <div className="text-xs leading-5 text-stone-400">解析后会替换下方分镜，请先确认剧本内容。</div>
+                            </div>
                         </section>
 
-                        <WorkflowSteps
-                            step={workflowStep}
-                            stats={shotStats}
-                            onBatchFrames={() => handleBatchFirstFrames("missing")}
-                            onBatchFramesAll={() => handleBatchFirstFrames("all")}
-                            onBatchVideos={handleBatchVideos}
-                            onAssemble={() => void handleAssemble()}
-                            onDownload={() => void handleDownloadAssemble()}
-                            onCancel={cancelRunning}
-                            batchKind={batchKind}
-                            assembleStatus={project.assemble?.status}
-                            canDownload={project.assemble?.status === "done"}
-                        />
-
-                        <section className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
+                        <section className="space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <div className="text-sm font-medium">分镜表</div>
-                                    <Tag>{shotStats.total} 镜</Tag>
-                                    <Tag>合计约 {totalDurationSec}s</Tag>
-                                    <Tag color="blue">首帧 {shotStats.withFrame}/{shotStats.total}</Tag>
-                                    <Tag color="success">视频 {shotStats.ready}/{shotStats.total}</Tag>
+                                    <div className="text-sm font-medium">镜头流水线</div>
+                                    <span className="text-xs text-stone-500">{shotStats.total} 镜 · 约 {totalDurationSec}s</span>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex gap-1">
                                     <Button icon={<Plus className="size-4" />} onClick={() => addShot(project.id)}>
                                         添加镜头
                                     </Button>
-                                    <Button
-                                        type={workflowStep === 2 ? "primary" : "default"}
-                                        icon={<ImagePlus className="size-4" />}
-                                        loading={batchKind === "frames"}
-                                        disabled={batchRunning && batchKind !== "frames"}
-                                        onClick={() => handleBatchFirstFrames("missing")}
-                                    >
-                                        批量出首帧{shotStats.missingFrames ? `（${shotStats.missingFrames}）` : ""}
-                                    </Button>
-                                    <Button
-                                        type={workflowStep === 3 ? "primary" : "default"}
-                                        icon={<Video className="size-4" />}
-                                        loading={batchKind === "videos"}
-                                        disabled={batchRunning && batchKind !== "videos"}
-                                        onClick={handleBatchVideos}
-                                    >
-                                        批量出视频{shotStats.readyForVideo ? `（${shotStats.readyForVideo}）` : ""}
-                                    </Button>
-                                    {batchRunning ? (
-                                        <Button danger onClick={cancelRunning}>
-                                            取消
-                                        </Button>
-                                    ) : null}
-                                    <Button icon={<Film className="size-4" />} disabled={shotStats.ready < 1} loading={project.assemble?.status === "running"} onClick={() => void handleAssemble()}>
-                                        拼接成片
-                                    </Button>
-                                    {project.assemble?.status === "done" ? (
-                                        <Button icon={<Download className="size-4" />} onClick={() => void handleDownloadAssemble()}>
-                                            下载成片
-                                        </Button>
-                                    ) : null}
                                 </div>
                             </div>
-                            <div className="text-xs leading-5 text-stone-500">编辑分镜文案、本镜时长（1–18s，默认 5s，各镜独立）与出场；生成结果在下方「分镜结果」独立查看。</div>
-                            {statusText ? (
-                                <div className="flex items-center gap-2 text-sm text-stone-500">
-                                    <LoaderCircle className="size-4 animate-spin" />
-                                    {statusText}
-                                </div>
-                            ) : null}
 
                             {project.shots.length ? (
-                                <div className="space-y-3">
+                                <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
                                     {project.shots.map((shot) => (
+                                        <div key={shot.id} className="grid gap-3 py-4 xl:grid-cols-[minmax(440px,1.15fr)_minmax(360px,.85fr)] xl:items-stretch">
                                         <ShotEditorCard
                                             key={shot.id}
                                             shot={shot}
-                                            characters={resolveProjectCharacters(project)}
-                                            busy={Boolean(busyShotIds[shot.id]) || batchRunning}
+                                            characters={projectCharacters}
                                             onChange={(patch) => updateShot(project.id, shot.id, patch)}
                                             onRemove={() => removeShot(project.id, shot.id)}
+                                        />
+                                        <ShotResultCard
+                                            shot={shot}
+                                            busy={Boolean(busyShotIds[shot.id]) || batchRunning}
+                                            onChange={(patch) => updateShot(project.id, shot.id, patch)}
+                                            onPickFrame={(role) => pickFrameFile(shot.id, role)}
+                                            onClearFrame={(role) => setShotFrame(project.id, shot.id, role, undefined)}
                                             onGenerateFrame={() => void handleGenerateFirstFrame(shot)}
                                             onGenerateVideo={() => void handleGenerateVideo(shot)}
+                                            onExtract={(position) => void handleExtractFrame(shot, position)}
                                         />
+                                        </div>
                                     ))}
                                 </div>
                             ) : (
@@ -884,36 +852,6 @@ export default function LongformPage() {
                                         添加镜头
                                     </Button>
                                 </Empty>
-                            )}
-                        </section>
-
-                        <section className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <div className="text-sm font-medium">分镜结果</div>
-                                    <Tag color="blue">{shotStats.withFrame} 首帧</Tag>
-                                    <Tag color="success">{shotStats.ready} 视频</Tag>
-                                </div>
-                                <div className="text-xs text-stone-500">每镜结果独立卡片；可在此上传帧、抽尾帧、审片</div>
-                            </div>
-                            {project.shots.length ? (
-                                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                                    {project.shots.map((shot) => (
-                                        <ShotResultCard
-                                            key={`result-${shot.id}`}
-                                            shot={shot}
-                                            busy={Boolean(busyShotIds[shot.id]) || batchRunning}
-                                            onChange={(patch) => updateShot(project.id, shot.id, patch)}
-                                            onPickFrame={(role) => pickFrameFile(shot.id, role)}
-                                            onClearFrame={(role) => setShotFrame(project.id, shot.id, role, undefined)}
-                                            onGenerateFrame={() => void handleGenerateFirstFrame(shot)}
-                                            onGenerateVideo={() => void handleGenerateVideo(shot)}
-                                            onExtract={(position) => void handleExtractFrame(shot, position)}
-                                        />
-                                    ))}
-                                </div>
-                            ) : (
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分镜结果" />
                             )}
                             {project.assemble?.status === "error" ? <div className="text-sm text-red-500">{project.assemble.error}</div> : null}
                             {project.assemble?.status === "done" && (project.assemble.videoUrl || project.assemble.storageKey) ? (
@@ -976,26 +914,20 @@ function ShotDurationControl({
 function ShotEditorCard({
     shot,
     characters,
-    busy,
     onChange,
     onRemove,
-    onGenerateFrame,
-    onGenerateVideo,
 }: {
     shot: LongformShot;
     characters: LongformCharacter[];
-    busy: boolean;
     onChange: (patch: Partial<LongformShot>) => void;
     onRemove: () => void;
-    onGenerateFrame: () => void;
-    onGenerateVideo: () => void;
 }) {
     const resolved = resolveShotCharacters(characters, shot);
     const explicit = Boolean(shot.characterIds?.length);
     const partial = characters.length > 1 && resolved.length > 0 && resolved.length < characters.length;
 
     return (
-        <div className="rounded-2xl border border-stone-200 p-3 dark:border-stone-800">
+        <div className="p-1">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">#{shot.index + 1}</span>
@@ -1005,17 +937,7 @@ function ShotEditorCard({
                     {shot.chainFromShotId ? <Tag>链式</Tag> : null}
                     {partial ? <Tag color="purple">指定出场</Tag> : null}
                 </div>
-                <div className="flex flex-wrap gap-1">
-                    <Button size="small" loading={busy} icon={<ImagePlus className="size-3.5" />} onClick={onGenerateFrame}>
-                        {shot.firstFrame ? "重出首帧" : "出首帧"}
-                    </Button>
-                    <Button size="small" type="primary" loading={busy} disabled={!shot.firstFrame} icon={<Video className="size-3.5" />} onClick={onGenerateVideo}>
-                        出视频
-                    </Button>
-                    <Button size="small" danger onClick={onRemove}>
-                        删除
-                    </Button>
-                </div>
+                <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} onClick={onRemove} />
             </div>
 
             <div className="mb-3">
@@ -1084,7 +1006,7 @@ function ShotResultCard({
     onExtract: (position: "first" | "last") => void;
 }) {
     return (
-        <div className="flex flex-col overflow-hidden rounded-2xl border border-stone-200 dark:border-stone-800">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-stone-200 dark:border-stone-800">
             <div className="space-y-2 border-b border-stone-100 px-3 py-2 dark:border-stone-800">
                 <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -1099,11 +1021,9 @@ function ShotResultCard({
                 <ShotDurationControl compact value={shot.durationSec} onChange={(durationSec) => onChange({ durationSec })} />
             </div>
 
-            <div className="grid grid-cols-2 gap-px bg-stone-100 dark:bg-stone-800">
+            <div className="grid grid-cols-3 gap-px bg-stone-100 dark:bg-stone-800">
                 <FrameSlot compact label="首帧" media={shot.firstFrame} onPick={() => onPickFrame("firstFrame")} onClear={() => onClearFrame("firstFrame")} />
                 <FrameSlot compact label="尾帧" media={shot.lastFrame} onPick={() => onPickFrame("lastFrame")} onClear={() => onClearFrame("lastFrame")} />
-            </div>
-            <div className="border-t border-stone-100 dark:border-stone-800">
                 <VideoSlot media={shot.video} tall />
             </div>
 
@@ -1309,59 +1229,59 @@ function WorkflowSteps({
     canDownload: boolean;
 }) {
     const items = [
-        { id: 1, title: "分镜", desc: `${stats.total} 条` },
-        { id: 2, title: "出首帧", desc: `${stats.withFrame}/${stats.total}` },
-        { id: 3, title: "出视频", desc: `${stats.ready}/${stats.total}` },
-        { id: 4, title: "成片", desc: assembleStatus === "done" ? "已导出" : "待拼接" },
+        { id: 1, title: "分镜", desc: `${stats.total}` },
+        { id: 2, title: "首帧", desc: `${stats.withFrame}/${stats.total}` },
+        { id: 3, title: "视频", desc: `${stats.ready}/${stats.total}` },
+        { id: 4, title: "成片", desc: assembleStatus === "done" ? "完成" : "待拼接" },
     ];
     return (
-        <section className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
-            <div className="text-sm font-medium text-stone-900 dark:text-stone-100">生产流程</div>
-            <div className="grid gap-2 sm:grid-cols-4">
+        <section className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="grid min-w-0 flex-1 grid-cols-4">
                 {items.map((item) => {
                     const active = step === item.id;
                     const done = step > item.id || (item.id === 4 && assembleStatus === "done");
                     return (
                         <div
                             key={item.id}
-                            className={`rounded-xl border px-3 py-2 ${active ? "border-stone-900 dark:border-stone-100" : "border-stone-200 dark:border-stone-700"} ${done ? "opacity-90" : ""}`}
+                            className="relative flex min-w-0 items-center gap-2 pr-2 after:absolute after:left-4 after:right-0 after:top-2 after:-z-10 after:h-px after:bg-stone-200 last:after:hidden dark:after:bg-stone-700"
                         >
-                            <div className="text-xs text-stone-500">
-                                {done ? "完成" : active ? "进行中" : "待办"} · {item.id}
+                            <span className={`flex size-4 shrink-0 items-center justify-center rounded-full border bg-background text-[9px] ${active ? "border-stone-950 bg-stone-950 text-white dark:border-stone-100 dark:bg-stone-100 dark:text-stone-950" : done ? "border-stone-500 bg-stone-500 text-white" : "border-stone-300 text-stone-400 dark:border-stone-600"}`}>
+                                {done ? "✓" : item.id}
+                            </span>
+                            <div className="min-w-0 bg-background pr-2">
+                                <div className={`truncate text-xs ${active ? "font-semibold text-stone-950 dark:text-stone-100" : "text-stone-500"}`}>{item.title}</div>
+                                <div className="text-[10px] text-stone-400">{item.desc}</div>
                             </div>
-                            <div className="text-sm font-medium text-stone-900 dark:text-stone-100">{item.title}</div>
-                            <div className="text-xs text-stone-500">{item.desc}</div>
                         </div>
                     );
                 })}
             </div>
-            <div className="flex flex-wrap gap-2">
-                <Button type="primary" icon={<ImagePlus className="size-4" />} loading={batchKind === "frames"} disabled={batchKind === "videos" || stats.total < 1} onClick={onBatchFrames}>
-                    ② 批量出首帧{stats.missingFrames ? `（缺 ${stats.missingFrames}）` : ""}
-                </Button>
-                <Button disabled={batchKind !== null || stats.withFrame < 1} onClick={onBatchFramesAll}>
-                    全部重出首帧
-                </Button>
-                <Button icon={<Video className="size-4" />} loading={batchKind === "videos"} disabled={batchKind === "frames"} onClick={onBatchVideos}>
-                    ③ 批量出视频{stats.readyForVideo ? `（${stats.readyForVideo}）` : ""}
-                </Button>
-                <Button icon={<Film className="size-4" />} disabled={stats.ready < 1 || batchKind !== null} loading={assembleStatus === "running"} onClick={onAssemble}>
-                    ④ 拼接成片
-                </Button>
-                {canDownload ? (
-                    <Button icon={<Download className="size-4" />} onClick={onDownload}>
-                        下载成片
-                    </Button>
-                ) : null}
+            <div className="flex shrink-0 flex-wrap gap-1">
                 {batchKind ? (
                     <Button danger onClick={onCancel}>
-                        取消当前任务
+                        取消
                     </Button>
                 ) : null}
+                {step === 2 ? (
+                    <>
+                        {stats.withFrame ? <Button onClick={onBatchFramesAll}>全部重出</Button> : null}
+                        <Button type="primary" icon={<ImagePlus className="size-4" />} loading={batchKind === "frames"} disabled={batchKind === "videos" || stats.total < 1} onClick={onBatchFrames}>
+                            生成缺失首帧{stats.missingFrames ? ` · ${stats.missingFrames}` : ""}
+                        </Button>
+                    </>
+                ) : null}
+                {step === 3 ? (
+                    <Button type="primary" icon={<Video className="size-4" />} loading={batchKind === "videos"} disabled={batchKind === "frames"} onClick={onBatchVideos}>
+                        生成待办视频{stats.readyForVideo ? ` · ${stats.readyForVideo}` : ""}
+                    </Button>
+                ) : null}
+                {step === 4 && !canDownload ? (
+                    <Button type="primary" icon={<Film className="size-4" />} disabled={stats.ready < 1 || batchKind !== null} loading={assembleStatus === "running"} onClick={onAssemble}>
+                        拼接成片
+                    </Button>
+                ) : null}
+                {canDownload ? <Button type="primary" icon={<Download className="size-4" />} onClick={onDownload}>下载成片</Button> : null}
             </div>
-            <p className="!mb-0 text-xs leading-5 text-stone-500">
-                分镜完成后请先走「批量出首帧」：只调用图片模型，不自动出视频。审完首帧后再出视频，便于控制跨镜一致性。
-            </p>
         </section>
     );
 }
