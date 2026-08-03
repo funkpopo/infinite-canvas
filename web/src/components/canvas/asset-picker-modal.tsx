@@ -10,14 +10,16 @@ export type InsertAssetPayload = { kind: "text"; content: string; title: string 
 type Props = {
     open: boolean;
     defaultTab?: string;
+    title?: string;
+    allowedKinds?: Array<Asset["kind"]>;
     onInsert: (payload: InsertAssetPayload) => void;
     onClose: () => void;
 };
 
-export function AssetPickerModal({ open, onInsert, onClose }: Props) {
+export function AssetPickerModal({ open, title = "选择资产", allowedKinds, onInsert, onClose }: Props) {
     return (
-        <Modal title="选择资产" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
-            <MyAssetsTab onInsert={onInsert} />
+        <Modal title={title} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
+            <MyAssetsTab allowedKinds={allowedKinds} onInsert={onInsert} />
         </Modal>
     );
 }
@@ -54,7 +56,7 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
     );
 }
 
-function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
+function MyAssetsTab({ allowedKinds, onInsert }: { allowedKinds?: Array<Asset["kind"]>; onInsert: (payload: InsertAssetPayload) => void }) {
     const assets = useAssetStore((state) => state.assets);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
@@ -63,10 +65,10 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video")
+            .filter((a) => (allowedKinds?.length ? allowedKinds.includes(a.kind) : a.kind === "text" || a.kind === "image" || a.kind === "video"))
             .filter((a) => kindFilter === "all" || a.kind === kindFilter)
             .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter]);
+    }, [allowedKinds, assets, keyword, kindFilter]);
 
     const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
 
@@ -99,7 +101,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     }}
                 />
                 <div className="flex gap-1.5">
-                    {kindOptions.map((opt) => (
+                    {kindOptions.filter((opt) => opt.value === "all" || !allowedKinds?.length || allowedKinds.includes(opt.value as Asset["kind"])).map((opt) => (
                         <Tag.CheckableTag
                             key={opt.value}
                             checked={kindFilter === opt.value}

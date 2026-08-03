@@ -3,8 +3,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { localForageStorage } from "@/lib/localforage-storage";
-import { buildShotsFromDrafts, createEmptyCharacter, normalizeDurationSec, parseScriptToShotDrafts } from "@/lib/longform/script";
-import type { LongformCharacter, LongformMediaRef, LongformProject, LongformShot, LongformShotDraft } from "@/types/longform";
+import { buildShotsFromDrafts, createEmptyCharacter, normalizeDurationSec } from "@/lib/longform/script";
+import type { LongformCharacter, LongformMediaRef, LongformProject, LongformScene, LongformShot, LongformShotDraft } from "@/types/longform";
 
 const STORE_KEY = "infinite-canvas:longform_projects";
 
@@ -16,17 +16,18 @@ type LongformStore = {
     setActiveProject: (id: string | null) => void;
     updateProject: (id: string, patch: Partial<Omit<LongformProject, "id" | "createdAt" | "shots">>) => void;
     setCharacters: (projectId: string, characters: LongformCharacter[]) => void;
+    setScenes: (projectId: string, scenes: LongformScene[]) => void;
     setShots: (projectId: string, shots: LongformShot[]) => void;
     updateShot: (projectId: string, shotId: string, patch: Partial<LongformShot>) => void;
     addShot: (projectId: string, draft?: LongformShotDraft) => string;
     removeShot: (projectId: string, shotId: string) => void;
-    importScript: (projectId: string, raw: string, source?: LongformProject["scriptSource"]) => number;
     replaceShotsFromDrafts: (
         projectId: string,
         drafts: LongformShotDraft[],
         meta?: {
             styleBible?: string;
             characters?: LongformCharacter[];
+            scenes?: LongformScene[];
             scriptSource?: LongformProject["scriptSource"];
             scriptRaw?: string;
         },
@@ -43,6 +44,7 @@ function normalizeProject(raw: LongformProject & { characterBible?: string }): L
     return {
         ...project,
         characters,
+        scenes: Array.isArray(project.scenes) ? project.scenes : [],
         shots: (project.shots || []).map((shot, index) => ({
             ...shot,
             index,
@@ -72,6 +74,7 @@ export const useLongformStore = create<LongformStore>()(
                     title,
                     styleBible: "",
                     characters: [],
+                    scenes: [],
                     aspectRatio: "16:9",
                     resolution: "720",
                     fps: 24,
@@ -106,6 +109,7 @@ export const useLongformStore = create<LongformStore>()(
             setCharacters: (projectId, characters) => {
                 get().updateProject(projectId, { characters: characters.map((item) => createEmptyCharacter(item)) });
             },
+            setScenes: (projectId, scenes) => get().updateProject(projectId, { scenes }),
             setShots: (projectId, shots) => {
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === projectId ? touch(project, { shots: reindex(shots) }) : project)),
@@ -145,12 +149,6 @@ export const useLongformStore = create<LongformStore>()(
                     }),
                 }));
             },
-            importScript: (projectId, raw, source = "import") => {
-                const drafts = parseScriptToShotDrafts(raw);
-                if (!drafts.length) return 0;
-                get().replaceShotsFromDrafts(projectId, drafts, { scriptSource: source, scriptRaw: raw });
-                return drafts.length;
-            },
             replaceShotsFromDrafts: (projectId, drafts, meta = {}) => {
                 set((state) => ({
                     projects: state.projects.map((project) => {
@@ -166,6 +164,7 @@ export const useLongformStore = create<LongformStore>()(
                             scriptRaw: meta.scriptRaw ?? project.scriptRaw,
                             styleBible: meta.styleBible?.trim() || project.styleBible,
                             characters,
+                            scenes: meta.scenes?.length ? meta.scenes : project.scenes,
                             assemble: { status: "idle" },
                         });
                     }),

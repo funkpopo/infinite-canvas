@@ -142,11 +142,7 @@ type MediaRef = {
 };
 ```
 
-剧本导入格式建议同时支持：
-
-- **纯文本 / Markdown**（场次、对白自由写，LLM 再结构化）
-- **结构化 JSON / CSV**（直接映射 `shots[]`）
-- 后续可扩展 Fountain 等专业剧本格式（非 MVP）
+剧本导入：任意格式正文均可粘贴，由 **LLM 统一结构化** 为 `shots[]` / `characters`（不再依赖本地 Markdown/JSON 启发式解析）。
 
 ## 端到端流程设计
 
@@ -251,8 +247,8 @@ concatVideos(clips: Blob[], options?: { transitions?: "none" | "crossfade" }): P
 ### Phase 1 — 剧本与分镜数据
 
 - [x] `LongformProject` / `LongformShot` 类型与 localforage 存储。
-- [x] 剧本导入（Markdown / 纯文本 / JSON）。
-- [x] Agnes 文本「剧本 → 结构化分镜」提示词模板 + 解析容错。
+- [x] 剧本导入：任意格式正文经 LLM 结构化为分镜（无本地启发式解析）。
+- [x] Agnes 文本「剧本 → 结构化分镜」+ 模型 JSON 输出落库。
 - [x] 分镜表基础 UI（列表编辑：时长、prompt、首尾帧槽位）。
 
 ### Phase 2 — 单镜生产闭环

@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 
-import type { LongformCharacter, LongformProject, LongformShot, LongformShotDraft } from "@/types/longform";
+import type { LongformCharacter, LongformProject, LongformScene, LongformShot, LongformShotDraft } from "@/types/longform";
 
 /** 常用预设（秒）；实际可取 1–18，按镜独立设置。 */
 export const LONGFORM_DURATION_OPTIONS = [3, 5, 10, 18] as const;
@@ -15,11 +15,27 @@ export function normalizeDurationSec(value: unknown, fallback = 5) {
 
 export function createEmptyCharacter(partial: Partial<LongformCharacter> = {}): LongformCharacter {
     const name = (partial.name || "").trim();
+    const reference = normalizeCharacterReference(partial.reference);
     return {
         id: partial.id || characterIdFromName(name || nanoid(6)),
         name,
         appearance: (partial.appearance || "").trim(),
         note: partial.note?.trim() || undefined,
+        reference,
+    };
+}
+
+function normalizeCharacterReference(value?: LongformCharacter["reference"]): LongformCharacter["reference"] {
+    if (!value) return undefined;
+    const storageKey = value.storageKey?.trim() || undefined;
+    const url = value.url?.trim() || undefined;
+    if (!storageKey && !url) return undefined;
+    return {
+        storageKey,
+        url,
+        width: value.width,
+        height: value.height,
+        mimeType: value.mimeType,
     };
 }
 
@@ -45,6 +61,7 @@ export function createEmptyShot(index: number, draft: LongformShotDraft = {}): L
         prompt,
         negativePrompt: draft.negativePrompt?.trim() || undefined,
         characterIds: draft.characterIds?.length ? draft.characterIds : undefined,
+        sceneId: draft.sceneId,
         status: "draft",
     };
 }
@@ -54,7 +71,7 @@ export function resolveProjectCharacters(project: Pick<LongformProject, "charact
     return Array.isArray(project.characters) ? project.characters.map((item) => createEmptyCharacter(item)) : [];
 }
 
-/** 自由文本角色列表：`姓名：外貌` 每行一条；用于导入解析，不作为项目持久化字段。 */
+/** 自由文本角色列表：`姓名：外貌` 每行一条；用于模型 JSON 角色字段归一化。 */
 export function parseCharacterLines(text: string): LongformCharacter[] {
     const raw = text.trim();
     if (!raw) return [];
@@ -143,16 +160,15 @@ export function buildShotBodyText(parts: { scene?: string; action?: string; came
  * 不注入「必须遵守 / 不要出现」等硬编码指令；多→单靠只带本镜角色描述实现。
  */
 export function composeGenerationPrompt(
-    project: Pick<LongformProject, "styleBible" | "characters">,
-    shot: Pick<LongformShot, "title" | "scene" | "action" | "camera" | "dialogue" | "prompt" | "characterIds">,
+    project: Pick<LongformProject, "styleBible" | "characters" | "scenes">,
+    shot: Pick<LongformShot, "title" | "scene" | "action" | "camera" | "dialogue" | "prompt" | "characterIds" | "sceneId">,
     _kind: "image" | "video" = "video",
 ) {
     const allCharacters = resolveProjectCharacters(project);
     const shotCharacters = resolveShotCharacters(allCharacters, shot);
-    const parts: string[] = [];
+    const sceneBible = project.scenes?.find((item) => item.id === shot.sceneId);
 
     const style = project.styleBible.trim();
-    if (style) parts.push(style);
 
     const castLines = shotCharacters
         .map((item) => {
@@ -162,19 +178,19 @@ export function composeGenerationPrompt(
             return [name, appearance, note].filter(Boolean).join(" · ");
         })
         .filter(Boolean);
-    if (castLines.length) parts.push(castLines.join("\n"));
-
-    const body = buildShotBodyText({
-        title: shot.title,
-        scene: shot.scene,
-        action: shot.action,
-        camera: shot.camera,
-        dialogue: shot.dialogue,
-        prompt: shot.prompt,
-    });
-    if (body) parts.push(body);
-
-    return parts.join("\n\n").trim();
+    const subject = [castLines.join("；"), shot.action, shot.dialogue].filter(Boolean).join("；");
+    const environment = [sceneBible?.name, sceneBible?.description, shot.scene].filter(Boolean).join("；");
+    if (_kind === "image") {
+        return [
+            `[主体] ${subject || shot.title}`,
+            `[场景 / 环境] ${environment}`,
+            `[风格] ${style}`,
+            `[光照] ${sceneBible?.description || "与场景时间和氛围一致的电影光线"}`,
+            `[构图] ${shot.camera || "电影叙事构图，主体清晰"}`,
+            `[质量要求] ${shot.prompt || "角色外貌与场景陈设跨镜头一致，电影级细节"}`,
+        ].filter((line) => !line.endsWith("] ")).join("\n");
+    }
+    return [style, castLines.join("\n"), environment, buildShotBodyText(shot)].filter(Boolean).join("\n\n").trim();
 }
 
 export function mapDraftCharacterIds(draft: LongformShotDraft, characters: LongformCharacter[]) {
@@ -218,6 +234,26 @@ export function buildShotsFromDrafts(drafts: LongformShotDraft[], characters: Lo
             characterIds: fromNames?.length ? fromNames : partial ? characterIds : undefined,
         };
     });
+}
+
+export function sceneIdFromName(name: string) {
+    return `scene:${name.trim().toLowerCase().replace(/\s+/g, "-") || nanoid(6)}`;
+}
+
+export function createEmptyScene(partial: Partial<LongformScene> = {}): LongformScene {
+    const name = (partial.name || "").trim();
+    return { id: partial.id || sceneIdFromName(name), name, description: (partial.description || "").trim(), reference: partial.reference };
+}
+
+export function dedupeScenes(list: LongformScene[]) {
+    const map = new Map<string, LongformScene>();
+    for (const item of list) {
+        const next = createEmptyScene(item);
+        const key = next.name.toLowerCase() || next.id;
+        const previous = map.get(key);
+        map.set(key, previous ? { ...previous, description: previous.description || next.description, reference: previous.reference || next.reference } : next);
+    }
+    return Array.from(map.values());
 }
 
 /** 合并角色表、从草稿补角色名、回填每镜 characterNames（不做文案改写）。 */
@@ -283,34 +319,61 @@ function harvestCharactersFromDrafts(drafts: LongformShotDraft[]): LongformChara
     return list;
 }
 
-/** 从 JSON / Markdown / 纯文本解析分镜草稿。 */
-export function parseScriptToShotDrafts(raw: string): LongformShotDraft[] {
-    const text = raw.trim();
-    if (!text) return [];
-
-    const fromJson = tryParseJsonShots(text);
-    if (fromJson?.length) return fromJson;
-
-    const fromMarkdown = parseMarkdownShots(text);
-    if (fromMarkdown.length) return fromMarkdown;
-
-    return parsePlainParagraphs(text);
-}
-
-function tryParseJsonShots(text: string): LongformShotDraft[] | null {
-    const candidates = [text, extractJsonBlock(text)].filter(Boolean) as string[];
-    for (const candidate of candidates) {
-        try {
-            const parsed = JSON.parse(candidate) as unknown;
-            const list = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { shots?: unknown }).shots) ? (parsed as { shots: unknown[] }).shots : null;
-            if (!list?.length) continue;
-            const drafts = list.map(normalizeDraftObject).filter((item) => item.action || item.prompt || item.scene || item.title);
-            if (drafts.length) return drafts;
-        } catch {
-            // continue
-        }
+/**
+ * 将 LLM 返回的分镜 JSON 落成草稿（仅用于模型输出，不做用户剧本本地启发式解析）。
+ * 支持整段 JSON、```json 代码块、前后夹杂说明文字。
+ */
+export function parseStoryboardFromJsonText(
+    raw: string,
+    options?: { existingCharacters?: LongformCharacter[]; existingScenes?: LongformScene[] },
+): {
+    styleBible?: string;
+    characters: LongformCharacter[];
+    scenes: LongformScene[];
+    shots: LongformShotDraft[];
+} | null {
+    const block = extractJsonBlock(raw) || raw.trim();
+    if (!block) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(block);
+    } catch {
+        return null;
     }
-    return null;
+    const list = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object" && Array.isArray((parsed as { shots?: unknown }).shots)
+          ? (parsed as { shots: unknown[] }).shots
+          : null;
+    if (!list?.length) return null;
+    const drafts = list.map(normalizeDraftObject).filter((item) => item.action || item.prompt || item.scene || item.title);
+    if (!drafts.length) return null;
+
+    let styleBible: string | undefined;
+    let characters: LongformCharacter[] | undefined;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const obj = parsed as { styleBible?: unknown; characters?: unknown; scenes?: unknown };
+        styleBible = str(obj.styleBible) || undefined;
+        characters = normalizeCharactersPayload(obj.characters);
+        const scenes = dedupeScenes([
+            ...(options?.existingScenes || []),
+            ...normalizeScenesPayload(obj.scenes),
+            ...drafts.map((draft) => createEmptyScene({ name: draft.sceneName || draft.scene })).filter((item) => item.name),
+        ]);
+        for (const draft of drafts) {
+            const target = (draft.sceneName || draft.scene || "").trim().toLowerCase();
+            const scene = scenes.find((item) => item.name.trim().toLowerCase() === target);
+            if (scene) draft.sceneId = scene.id;
+        }
+        const result = finalizeStoryboard({ styleBible, characters, shots: drafts, existingCharacters: options?.existingCharacters });
+        return { ...result, scenes };
+    }
+    return { ...finalizeStoryboard({
+        styleBible,
+        characters,
+        shots: drafts,
+        existingCharacters: options?.existingCharacters,
+    }), scenes: options?.existingScenes || [] };
 }
 
 function extractJsonBlock(text: string) {
@@ -335,15 +398,24 @@ function normalizeDraftObject(value: unknown): LongformShotDraft {
     return {
         title: str(item.title || item.name || item.shot),
         scene: str(item.scene || item.location || item.setting),
+        sceneName: str(item.sceneName || item.locationName || item.scene || item.location || item.setting),
         action: str(item.action || item.description || item.content || item.visual),
         dialogue: str(item.dialogue || item.dialog || item.line),
         camera: str(item.camera || item.shot_type || item.movement),
-        // 缺省由 createEmptyShot → 5s；有值则钳制 1–18，不强制 18
         durationSec: rawDuration == null || rawDuration === "" ? undefined : normalizeDurationSec(rawDuration, 5),
         prompt: str(item.prompt || item.video_prompt),
         negativePrompt: str(item.negativePrompt || item.negative_prompt),
         characterNames: characterNames.length ? characterNames : undefined,
     };
+}
+
+function normalizeScenesPayload(value: unknown): LongformScene[] {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => {
+        if (typeof item === "string") return createEmptyScene({ name: item });
+        const row = item as Record<string, unknown>;
+        return createEmptyScene({ name: str(row.name || row.scene || row.location), description: str(row.description || row.environment || row.setting || row.desc) });
+    }).filter((item) => item.name || item.description);
 }
 
 function normalizeNameList(value: unknown): string[] {
@@ -364,174 +436,6 @@ function normalizeNameList(value: unknown): string[] {
             .filter(Boolean);
     }
     return [];
-}
-
-/** 分镜块标题：镜头/分镜/Shot + 阿拉伯或中文数字，含 【镜头1】、## 分镜二 等。 */
-const SHOT_HEAD_LINE =
-    /^(?:#{1,6}\s*)?(?:【\s*)?(?:镜头|分镜|Shot|Scene)\s*(?:第)?\s*(?:\d+|[一二三四五六七八九十百两零〇]+)\s*(?:镜|场|幕|回)?\s*】?\s*[:：.\-—)）]?\s*/i;
-/** 仅在「镜头/分镜」标题处切分，不用泛化的 ## 任意标题，避免前言/大纲变成空白镜。 */
-const SHOT_HEAD_SPLIT =
-    /\n(?=(?:#{1,6}\s*)?(?:【\s*)?(?:镜头|分镜|Shot|Scene)\s*(?:第)?\s*(?:\d+|[一二三四五六七八九十百两零〇]+))/i;
-
-function isShotHeaderLine(line: string) {
-    const head = line.trim();
-    if (!head) return false;
-    if (SHOT_HEAD_LINE.test(head)) return true;
-    // 宽松：镜头一 / 分镜 2 / 【镜头1】雨夜
-    return /^(?:#{1,6}\s*)?(?:【\s*)?(?:镜头|分镜|Shot|Scene)\s*(?:第)?\s*(?:\d+|[一二三四五六七八九十百两零〇]+)/i.test(head);
-}
-
-function parseMarkdownShots(text: string): LongformShotDraft[] {
-    const blocks = splitStoryboardBlocks(text);
-    if (blocks.length < 2 && !/(?:镜头|分镜|Shot)\s*(?:第)?\s*(?:\d+|[一二三四五六七八九十])/i.test(text)) return [];
-    const fieldAliases: Record<string, keyof LongformShotDraft | "characterField" | "durationField"> = {
-        场景: "scene",
-        scene: "scene",
-        动作: "action",
-        action: "action",
-        对白: "dialogue",
-        dialogue: "dialogue",
-        运镜: "camera",
-        camera: "camera",
-        提示词: "prompt",
-        prompt: "prompt",
-        时长: "durationField",
-        秒数: "durationField",
-        duration: "durationField",
-        seconds: "durationField",
-        角色: "characterField",
-        出场: "characterField",
-        characters: "characterField",
-    };
-    const drafts = blocks.map((block, index) => {
-        const lines = block
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean);
-        if (!lines.length) return { durationSec: 5 } as LongformShotDraft;
-        const head = lines[0];
-        const titleFromHead = head
-            .replace(/^#{1,6}\s*/, "")
-            .replace(SHOT_HEAD_LINE, "")
-            .replace(/^【\s*|\s*】$/g, "")
-            .trim();
-        // 纯「镜头 N」标题时用序号，避免空 title 回退成整行导致只像一镜
-        const title = titleFromHead || (isShotHeaderLine(head) ? `镜头 ${index + 1}` : head);
-        const draft: LongformShotDraft = { title, durationSec: 5 };
-        const body: string[] = [];
-        let characterField = "";
-        // 首行若是「镜头1：动作摘要」且 strip 后仍有内容，并入动作
-        if (titleFromHead && isShotHeaderLine(head) && !/^[^:：]{1,16}\s*[:：]/.test(titleFromHead)) {
-            body.push(titleFromHead);
-        }
-        for (const line of lines.slice(1)) {
-            const match = line.match(/^([^:：]{1,16})\s*[:：]\s*(.+)$/);
-            if (match) {
-                const key = fieldAliases[match[1].trim().toLowerCase()] || fieldAliases[match[1].trim()];
-                if (key === "characterField") {
-                    characterField = match[2].trim();
-                    continue;
-                }
-                if (key === "durationField") {
-                    draft.durationSec = normalizeDurationSec(String(match[2]).replace(/[^\d.]/g, ""), 5);
-                    continue;
-                }
-                if (key) {
-                    (draft as Record<string, unknown>)[key] = match[2].trim();
-                    continue;
-                }
-            }
-            body.push(line);
-        }
-        if (!draft.action) draft.action = body.join("\n").trim();
-        if (characterField) draft.characterNames = normalizeNameList(characterField);
-        return draft;
-    });
-    // 必须有场景/动作/提示词之一，排除仅标题的空白镜与前言块
-    return drafts.filter((item) => Boolean((item.action || item.prompt || item.scene || "").trim()));
-}
-
-/** 按镜头标题切块；丢掉第一镜之前的前言/大纲。 */
-function splitStoryboardBlocks(text: string): string[] {
-    const normalized = text.replace(/\r\n/g, "\n").trim();
-    if (!normalized) return [];
-    const byHeader = normalized
-        .split(SHOT_HEAD_SPLIT)
-        .map((block) => block.trim())
-        .filter(Boolean);
-    const shotOnly = dropLeadingNonShotBlocks(byHeader);
-    if (shotOnly.length >= 1) return shotOnly;
-    // 无换行分隔时：同一行多个「镜头N：」
-    const inline = normalized
-        .split(/(?=(?:【\s*)?(?:镜头|分镜|Shot)\s*(?:第)?\s*(?:\d+|[一二三四五六七八九十百两零〇]+))/i)
-        .map((b) => b.trim())
-        .filter(Boolean);
-    const inlineShots = dropLeadingNonShotBlocks(inline);
-    if (inlineShots.length >= 1) return inlineShots;
-    return shotOnly;
-}
-
-/** 存在镜头标题时，丢弃不以镜头/分镜开头的前导块（剧本说明、角色表等）。 */
-function dropLeadingNonShotBlocks(blocks: string[]) {
-    if (blocks.length < 2) return blocks.filter((block) => isShotHeaderLine(block.split(/\r?\n/).find((line) => line.trim()) || ""));
-    const firstShot = blocks.findIndex((block) => isShotHeaderLine(block.split(/\r?\n/).find((line) => line.trim()) || ""));
-    if (firstShot < 0) return blocks;
-    return blocks.slice(firstShot).filter((block) => {
-        const head = block.split(/\r?\n/).find((line) => line.trim()) || "";
-        return isShotHeaderLine(head);
-    });
-}
-
-function parsePlainParagraphs(text: string): LongformShotDraft[] {
-    const parts = text
-        .split(/\n{2,}/)
-        .map((part) => part.trim())
-        .filter((part) => part.length > 8);
-    if (parts.length >= 2) {
-        return parts.map((action) => ({ action, durationSec: 5 }));
-    }
-    // 不截断条数：有多少有效句就出多少镜
-    return text
-        .split(/[。！？\n]+/)
-        .map((part) => part.trim())
-        .filter((part) => part.length > 6)
-        .map((action) => ({ action, durationSec: 5 }));
-}
-
-/** 解析用户粘贴的结构化分镜（JSON / Markdown / 纯文本）。 */
-export function parseStructuredStoryboard(
-    raw: string,
-    options?: { existingCharacters?: LongformCharacter[] },
-): {
-    styleBible?: string;
-    characters?: LongformCharacter[];
-    shots: LongformShotDraft[];
-} {
-    const drafts = tryParseJsonShots(raw);
-    if (!drafts?.length) {
-        return finalizeStoryboard({
-            shots: parseScriptToShotDrafts(raw),
-            existingCharacters: options?.existingCharacters,
-        });
-    }
-    let styleBible: string | undefined;
-    let characters: LongformCharacter[] | undefined;
-    try {
-        const parsed = JSON.parse(extractJsonBlock(raw) || raw) as {
-            styleBible?: string;
-            characters?: unknown;
-        };
-        styleBible = str(parsed.styleBible);
-        characters = normalizeCharactersPayload(parsed.characters);
-    } catch {
-        // ignore
-    }
-    return finalizeStoryboard({
-        styleBible,
-        characters,
-        shots: drafts,
-        existingCharacters: options?.existingCharacters,
-    });
 }
 
 function normalizeCharactersPayload(value: unknown): LongformCharacter[] | undefined {
@@ -571,6 +475,7 @@ export function dedupeCharacters(list: LongformCharacter[]) {
             ...prev,
             appearance: [prev.appearance, item.appearance].filter(Boolean).join("; "),
             note: prev.note || item.note,
+            reference: prev.reference || item.reference,
         });
     }
     return Array.from(map.values());

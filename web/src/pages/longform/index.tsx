@@ -6,23 +6,25 @@ import { saveAs } from "file-saver";
 import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { preloadFfmpeg } from "@/lib/media/ffmpeg-frames";
-import { createEmptyCharacter, LONGFORM_DURATION_OPTIONS, normalizeDurationSec, parseStructuredStoryboard, resolveProjectCharacters, resolveShotCharacters, dedupeCharacters } from "@/lib/longform/script";
+import { createEmptyCharacter, createEmptyScene, dedupeCharacters, dedupeScenes, LONGFORM_DURATION_OPTIONS, normalizeDurationSec, resolveProjectCharacters, resolveShotCharacters } from "@/lib/longform/script";
 import {
     assembleProjectVideos,
     assistWriteLongform,
     extractShotFrame,
     generateShotFirstFrame,
     generateShotVideo,
+    parseLongformScriptWithLlm,
     resolveMediaDisplayUrl,
     selectShotsForFirstFrame,
     selectShotsForVideo,
     blobToMediaRef,
+    storeImageSourceAsMediaRef,
 } from "@/lib/longform/generation";
 import { getMediaBlob } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { selectActiveLongformProject, useLongformStore } from "@/stores/use-longform-store";
-import type { LongformCharacter, LongformMediaRef, LongformShot } from "@/types/longform";
+import type { LongformCharacter, LongformMediaRef, LongformScene, LongformShot } from "@/types/longform";
 import type { AiTextMessage } from "@/services/api/image";
 import { requestImageQuestion } from "@/services/api/image";
 import type { ReferenceImage } from "@/types/image";
@@ -59,10 +61,10 @@ export default function LongformPage() {
     const setActiveProject = useLongformStore((state) => state.setActiveProject);
     const updateProject = useLongformStore((state) => state.updateProject);
     const setCharacters = useLongformStore((state) => state.setCharacters);
+    const setScenes = useLongformStore((state) => state.setScenes);
     const updateShot = useLongformStore((state) => state.updateShot);
     const addShot = useLongformStore((state) => state.addShot);
     const removeShot = useLongformStore((state) => state.removeShot);
-    const importScript = useLongformStore((state) => state.importScript);
     const replaceShotsFromDrafts = useLongformStore((state) => state.replaceShotsFromDrafts);
     const setShotFrame = useLongformStore((state) => state.setShotFrame);
     const setShotVideo = useLongformStore((state) => state.setShotVideo);
@@ -70,11 +72,12 @@ export default function LongformPage() {
 
     const [batchKind, setBatchKind] = useState<BatchKind>(null);
     const [assisting, setAssisting] = useState(false);
+    const [parsing, setParsing] = useState(false);
     const [assistInstruction, setAssistInstruction] = useState("");
     const [statusText, setStatusText] = useState("");
     const [isGeneratingStyle, setIsGeneratingStyle] = useState(false);
     const [isParsingImage, setIsParsingImage] = useState(false);
-    const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [assetPickerTarget, setAssetPickerTarget] = useState<"character" | "scene" | null>(null);
     /** 批量任务共用 abort；单镜任务各自独立，互不影响。 */
     const abortRef = useRef<AbortController | null>(null);
     const shotAbortRef = useRef(new Map<string, AbortController>());
@@ -105,6 +108,7 @@ export default function LongformPage() {
         return { total, withFrame, ready, missingFrames, readyForVideo };
     }, [project]);
     const projectCharacters = useMemo(() => (project ? resolveProjectCharacters(project) : []), [project]);
+    const projectScenes = project?.scenes || [];
 
     /** 流程阶段：1 分镜 → 2 首帧 → 3 视频 → 4 成片 */
     const workflowStep = useMemo(() => {
@@ -121,30 +125,48 @@ export default function LongformPage() {
         setActiveProject(id);
     };
 
-    const handleImportParse = () => {
+    /** 解析导入：一律用 LLM 将任意格式剧本结构化为分镜，不做本地启发式解析。 */
+    const handleImportParse = async () => {
         if (!project?.scriptRaw.trim()) {
             message.warning("请先粘贴剧本或分镜文本");
             return;
         }
-        const structured = parseStructuredStoryboard(project.scriptRaw, {
-            existingCharacters: resolveProjectCharacters(project),
-        });
-        if (structured.shots.length) {
-            replaceShotsFromDrafts(project.id, structured.shots, {
+        if (!isAiConfigReady(effectiveConfig, textModel)) {
+            openConfigDialog();
+            return;
+        }
+        const projectId = project.id;
+        const scriptRaw = project.scriptRaw;
+        setParsing(true);
+        setStatusText("正在用 LLM 解析剧本…");
+        try {
+            const textConfig = { ...effectiveConfig, model: textModel };
+            const structured = await parseLongformScriptWithLlm(textConfig, {
+                scriptRaw,
+                styleBible: project.styleBible,
+                characters: resolveProjectCharacters(project),
+                scenes: project.scenes,
+            });
+            if (!structured.shots.length) {
+                message.warning("未能解析出分镜，请补充剧情后再试");
+                return;
+            }
+            replaceShotsFromDrafts(projectId, structured.shots, {
                 styleBible: structured.styleBible,
                 characters: structured.characters,
+                scenes: structured.scenes,
                 scriptSource: "import",
-                scriptRaw: project.scriptRaw,
+                scriptRaw,
             });
-            message.success(`已导入 ${structured.shots.length} 个镜头${structured.characters?.length ? `、${structured.characters.length} 名角色` : ""}。确认后可批量出首帧`);
-            return;
+            message.success(
+                `已导入 ${structured.shots.length} 个镜头${structured.characters?.length ? `、${structured.characters.length} 名角色` : ""}。确认后可批量出首帧`,
+            );
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "解析导入失败");
+        } finally {
+            setParsing(false);
+            setStatusText("");
         }
-        const count = importScript(project.id, project.scriptRaw, "import");
-        if (!count) {
-            message.warning("未能解析出分镜，请使用 Markdown/JSON 分镜，或先 LLM 辅助撰写再解析");
-            return;
-        }
-        message.success(`已导入 ${count} 个镜头。下一步：确认分镜后批量出首帧`);
     };
 
     /** LLM 辅助撰写：流式写入剧本区，不再另开预览，避免双份结果。 */
@@ -164,6 +186,7 @@ export default function LongformPage() {
             scriptRaw: project.scriptRaw,
             styleBible: project.styleBible,
             characters: resolveProjectCharacters(project),
+            scenes: project.scenes,
         };
         setAssisting(true);
         setStatusText("LLM 辅助撰写中…");
@@ -213,7 +236,7 @@ export default function LongformPage() {
         }
     };
 
-    /** 从资产库图片解析人物并导入角色圣经。 */
+    /** 从资产库图片解析人物并导入角色圣经；源图写入角色 reference，供首帧/视频参考图保持一致。 */
     const handleParseImageCharacters = async (image: ReferenceImage) => {
         if (!project) return;
         if (!isAiConfigReady(effectiveConfig, textModel)) {
@@ -226,6 +249,17 @@ export default function LongformPage() {
             // 资产库里的图多为 blob: / storageKey，需转成 data URL 再发给模型（服务端读不了 blob）
             const dataUrl = await imageToDataUrl(image);
             if (!dataUrl?.startsWith("data:")) throw new Error("图片不可用或无法转为 base64");
+            // 角色参考图本地化入库，避免后续生成时直连远程 URL 触发 CORS
+            let reference: LongformMediaRef;
+            if (image.storageKey?.startsWith("image:")) {
+                reference = {
+                    storageKey: image.storageKey,
+                    url: image.url || dataUrl,
+                    mimeType: image.type || "image/jpeg",
+                };
+            } else {
+                reference = await storeImageSourceAsMediaRef(dataUrl);
+            }
             const messages: AiTextMessage[] = [{
                 role: "user",
                 content: [
@@ -245,15 +279,58 @@ export default function LongformPage() {
             if (!match) throw new Error("模型没有返回有效 JSON");
             const data = JSON.parse(match[0]) as { characters?: Array<{ name?: string; appearance?: string }> };
             const newChars = Array.isArray(data.characters)
-                ? data.characters.map((item) => createEmptyCharacter({ name: item.name || "", appearance: item.appearance || "" }))
+                ? data.characters.map((item) =>
+                    createEmptyCharacter({
+                        name: item.name || "",
+                        appearance: item.appearance || "",
+                        reference,
+                    }),
+                )
                 : [];
             if (!newChars.length) throw new Error("未解析到人物");
             const existing = resolveProjectCharacters(project);
             const merged = dedupeCharacters([...existing, ...newChars]);
             setCharacters(project.id, merged);
-            message.success(`已导入 ${newChars.length} 个角色到圣经`);
+            message.success(`已导入 ${newChars.length} 个角色（含参考图）到圣经`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "图片解析失败");
+        } finally {
+            setIsParsingImage(false);
+            setStatusText("");
+        }
+    };
+
+    /** 从资产图片提取稳定的场景特征并绑定原图，供所有关联镜头复用。 */
+    const handleParseImageScene = async (image: ReferenceImage) => {
+        if (!project) return;
+        if (!isAiConfigReady(effectiveConfig, textModel)) {
+            openConfigDialog();
+            return;
+        }
+        setIsParsingImage(true);
+        setStatusText("正在解析图片场景…");
+        try {
+            const dataUrl = await imageToDataUrl(image);
+            if (!dataUrl?.startsWith("data:")) throw new Error("图片不可用或无法转为 base64");
+            const reference = image.storageKey?.startsWith("image:")
+                ? { storageKey: image.storageKey, url: image.url || dataUrl, mimeType: image.type || "image/jpeg" }
+                : await storeImageSourceAsMediaRef(dataUrl);
+            const messages: AiTextMessage[] = [{
+                role: "user",
+                content: [
+                    { type: "text", text: "分析图片中的场景，不描述人物动作。输出 JSON：{\"name\":\"简短唯一场景名\",\"description\":\"可跨镜头复现的空间结构、固定陈设、材质、主色、时间与光线\"}。只输出 JSON，不臆造画面外信息。" },
+                    { type: "image_url", image_url: { url: dataUrl } },
+                ],
+            }];
+            const text = await requestImageQuestion({ ...effectiveConfig, model: textModel }, messages, () => undefined);
+            const match = text.match(/\{[\s\S]*\}/);
+            if (!match) throw new Error("模型没有返回有效 JSON");
+            const data = JSON.parse(match[0]) as { name?: string; description?: string };
+            const scene = createEmptyScene({ name: data.name || image.name, description: data.description || "", reference });
+            setScenes(project.id, dedupeScenes([...projectScenes, scene]));
+            message.success(`已将“${scene.name}”加入场景圣经并绑定参考图`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "场景解析失败");
         } finally {
             setIsParsingImage(false);
             setStatusText("");
@@ -610,23 +687,27 @@ export default function LongformPage() {
             <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 pb-16 lg:px-6">
             <input ref={frameInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void onFrameFile(event.target.files)} />
             <AssetPickerModal
-                open={assetPickerOpen}
+                open={assetPickerTarget !== null}
                 defaultTab="my-assets"
+                title={assetPickerTarget === "scene" ? "选择场景参考图" : "选择人物参考图"}
+                allowedKinds={["image"]}
                 onInsert={(payload: InsertAssetPayload) => {
                     if (payload.kind === "image") {
-                        void handleParseImageCharacters({
+                        const image = {
                             id: payload.storageKey || payload.title || "asset-image",
                             name: payload.title || "asset",
                             type: "image/jpeg",
                             dataUrl: payload.dataUrl,
                             storageKey: payload.storageKey,
-                        });
+                        };
+                        if (assetPickerTarget === "scene") void handleParseImageScene(image);
+                        else void handleParseImageCharacters(image);
                     } else {
                         message.warning("请选择图片资产");
                     }
-                    setAssetPickerOpen(false);
+                    setAssetPickerTarget(null);
                 }}
-                onClose={() => setAssetPickerOpen(false)}
+                onClose={() => setAssetPickerTarget(null)}
             />
 
             <header className="flex flex-wrap items-center justify-between gap-3">
@@ -691,7 +772,7 @@ export default function LongformPage() {
                                 <div className="flex items-center gap-2">
                                     <Settings2 className="size-4 text-stone-500" />
                                     <span className="text-sm font-medium">项目设置</span>
-                                    <span className="text-xs text-stone-400">{project.aspectRatio} · {project.resolution}p · {project.fps}fps · {projectCharacters.length} 角色</span>
+                                    <span className="text-xs text-stone-400">{project.aspectRatio} · {project.resolution}p · {project.fps}fps · {projectCharacters.length} 角色 · {projectScenes.length} 场景</span>
                                 </div>
                                 <ChevronDown className="size-4 text-stone-400 transition group-open:rotate-180" />
                             </summary>
@@ -753,7 +834,13 @@ export default function LongformPage() {
                             <CharacterBibleEditor
                                 characters={projectCharacters}
                                 onChange={(characters) => setCharacters(project.id, characters)}
-                                onOpenAssetPicker={() => setAssetPickerOpen(true)}
+                                onOpenAssetPicker={() => setAssetPickerTarget("character")}
+                                isParsing={isParsingImage}
+                            />
+                            <SceneBibleEditor
+                                scenes={projectScenes}
+                                onChange={(scenes) => setScenes(project.id, scenes)}
+                                onOpenAssetPicker={() => setAssetPickerTarget("scene")}
                                 isParsing={isParsingImage}
                             />
                             <div className="flex flex-wrap items-center gap-4">
@@ -780,10 +867,10 @@ export default function LongformPage() {
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="text-sm font-medium text-stone-900 dark:text-stone-100">剧本</div>
                                 <div className="flex flex-wrap gap-2">
-                                    <Button type="primary" icon={<Sparkles className="size-4" />} loading={assisting} onClick={() => void handleAssistWrite()}>
+                                    <Button type="primary" icon={<Sparkles className="size-4" />} loading={assisting} disabled={parsing} onClick={() => void handleAssistWrite()}>
                                         LLM 辅助撰写
                                     </Button>
-                                    <Button icon={<Upload className="size-4" />} onClick={handleImportParse}>
+                                    <Button icon={<Upload className="size-4" />} loading={parsing} disabled={assisting} onClick={() => void handleImportParse()}>
                                         解析导入
                                     </Button>
                                 </div>
@@ -791,7 +878,7 @@ export default function LongformPage() {
                             <Input.TextArea
                                 autoSize={{ minRows: 8, maxRows: 18 }}
                                 value={project.scriptRaw}
-                                placeholder={"粘贴或撰写剧本 / Markdown / JSON。例如：\n## 镜头 1\n场景：雨夜街道\n动作：小明撑伞转身\n角色：小明\n\n或 JSON：{ \"characters\": [...], \"shots\": [...] }"}
+                                placeholder={"粘贴任意格式剧本即可，例如：\n雨夜，小明撑伞走在空街上，忽然回头——身后只有积水倒影。\n切到咖啡馆内，林晚把照片推过桌面：「你认识他吗？」"}
                                 onChange={(event) => updateProject(project.id, { scriptRaw: event.target.value })}
                             />
                             </div>
@@ -802,7 +889,7 @@ export default function LongformPage() {
                                     placeholder="可选：告诉 LLM 如何改写，例如扩成 12 镜、加强悬疑感"
                                     onChange={(event) => setAssistInstruction(event.target.value)}
                                 />
-                                <div className="text-xs leading-5 text-stone-400">解析后会替换下方分镜，请先确认剧本内容。</div>
+                                <div className="text-xs leading-5 text-stone-400">「解析导入」调用文本模型将任意格式剧本拆成下方分镜表，会替换现有分镜，请先确认正文。</div>
                             </div>
                         </section>
 
@@ -827,6 +914,7 @@ export default function LongformPage() {
                                             key={shot.id}
                                             shot={shot}
                                             characters={projectCharacters}
+                                            scenes={projectScenes}
                                             onChange={(patch) => updateShot(project.id, shot.id, patch)}
                                             onRemove={() => removeShot(project.id, shot.id)}
                                         />
@@ -914,11 +1002,13 @@ function ShotDurationControl({
 function ShotEditorCard({
     shot,
     characters,
+    scenes,
     onChange,
     onRemove,
 }: {
     shot: LongformShot;
     characters: LongformCharacter[];
+    scenes: LongformScene[];
     onChange: (patch: Partial<LongformShot>) => void;
     onRemove: () => void;
 }) {
@@ -963,6 +1053,20 @@ function ShotEditorCard({
                     {explicit ? "手动" : "自动"} · {resolved.length ? resolved.map((item) => item.name).join("、") : "无"}
                 </div>
             </div>
+
+            <label className="mb-3 block space-y-1 text-xs text-stone-500">
+                一致性场景
+                <Select
+                    allowClear
+                    className="w-full"
+                    size="small"
+                    placeholder={scenes.length ? "选择场景圣经，生成时带入参考图" : "请先在项目设置中添加场景"}
+                    value={shot.sceneId}
+                    options={scenes.map((item) => ({ value: item.id, label: item.name || "未命名场景" }))}
+                    onChange={(sceneId) => onChange({ sceneId })}
+                    disabled={!scenes.length}
+                />
+            </label>
 
             <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
@@ -1064,7 +1168,7 @@ function CharacterBibleEditor({
         <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm text-stone-500">
-                    角色圣经（多人）· 生成首帧/视频时按「本镜出场」注入
+                    角色圣经（多人）· 参考图会作为首帧/视频参考图保持人物一致
                 </div>
                 <div className="flex flex-wrap gap-1">
                     <Button
@@ -1087,7 +1191,8 @@ function CharacterBibleEditor({
             {characters.length ? (
                 <div className="space-y-2">
                     {characters.map((item, index) => (
-                        <div key={item.id} className="grid gap-2 rounded-xl border border-stone-200 p-2 dark:border-stone-700 md:grid-cols-[120px_minmax(0,1fr)_auto] md:items-start">
+                        <div key={item.id} className="grid gap-2 rounded-xl border border-stone-200 p-2 dark:border-stone-700 md:grid-cols-[72px_120px_minmax(0,1fr)_auto] md:items-start">
+                            <CharacterReferenceThumb media={item.reference} />
                             <Input size="small" value={item.name} placeholder="姓名" onChange={(event) => updateAt(index, { name: event.target.value })} />
                             <Input.TextArea
                                 size="small"
@@ -1105,8 +1210,71 @@ function CharacterBibleEditor({
                 </div>
             ) : (
                 <div className="rounded-xl border border-dashed border-stone-300 px-3 py-4 text-xs text-stone-400 dark:border-stone-700">
-                    暂无角色。可手动添加，或从资产库解析图片人物，或在剧本 JSON/Markdown 中写角色后「解析导入」。多人请分别填外貌，单人特写只勾选该角色。
+                    暂无角色。可从资产库解析人物（会绑定参考图用于出首帧/视频），或手动添加，或「解析导入」剧本提取。多人请分别填外貌，单人特写只勾选该角色。
                 </div>
+            )}
+        </div>
+    );
+}
+
+function SceneBibleEditor({
+    scenes,
+    onChange,
+    onOpenAssetPicker,
+    isParsing = false,
+}: {
+    scenes: LongformScene[];
+    onChange: (scenes: LongformScene[]) => void;
+    onOpenAssetPicker: () => void;
+    isParsing?: boolean;
+}) {
+    const updateAt = (index: number, patch: Partial<LongformScene>) => {
+        onChange(scenes.map((item, i) => (i === index ? createEmptyScene({ ...item, ...patch, id: item.id }) : item)));
+    };
+    return (
+        <div className="space-y-2 border-t border-stone-200 pt-4 dark:border-stone-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-stone-500">场景圣经 · 绑定空间参考图，供多个镜头保持环境与陈设一致</div>
+                <div className="flex gap-1">
+                    <Button size="small" icon={<ImagePlus className="size-3.5" />} loading={isParsing} onClick={onOpenAssetPicker}>从资源库解析场景</Button>
+                    <Button size="small" icon={<Plus className="size-3.5" />} onClick={() => onChange([...scenes, createEmptyScene({ name: `场景${scenes.length + 1}` })])}>添加场景</Button>
+                </div>
+            </div>
+            {scenes.length ? (
+                <div className="space-y-2">
+                    {scenes.map((item, index) => (
+                        <div key={item.id} className="grid gap-2 rounded-xl border border-stone-200 p-2 dark:border-stone-700 md:grid-cols-[72px_140px_minmax(0,1fr)_auto] md:items-start">
+                            <CharacterReferenceThumb media={item.reference} label="场景参考" />
+                            <Input size="small" value={item.name} placeholder="场景名" onChange={(event) => updateAt(index, { name: event.target.value })} />
+                            <Input.TextArea size="small" autoSize={{ minRows: 2, maxRows: 8 }} value={item.description} placeholder="空间结构、固定陈设、材质、主色、时间与光线" onChange={(event) => updateAt(index, { description: event.target.value })} />
+                            <Button size="small" danger onClick={() => onChange(scenes.filter((_, i) => i !== index))}>删除</Button>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="rounded-xl border border-dashed border-stone-300 px-3 py-4 text-xs text-stone-400 dark:border-stone-700">暂无场景。可从资源库选择场景图并由 LLM 提取稳定特征，随后在每个镜头中绑定。</div>
+            )}
+        </div>
+    );
+}
+
+function CharacterReferenceThumb({ media, label = "角色参考" }: { media?: LongformMediaRef; label?: string }) {
+    const [url, setUrl] = useState("");
+    useEffect(() => {
+        let cancelled = false;
+        void resolveMediaDisplayUrl(media).then((value) => {
+            if (!cancelled) setUrl(value);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [media]);
+    return (
+        <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
+            {url ? (
+                <img src={url} alt={label} className="size-full object-cover" />
+            ) : (
+                <span className="px-1 text-center text-[10px] leading-tight text-stone-400">无参考图</span>
             )}
         </div>
     );
