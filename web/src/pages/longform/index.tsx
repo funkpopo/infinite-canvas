@@ -31,6 +31,18 @@ import type { ReferenceImage } from "@/types/image";
 
 type BatchKind = "frames" | "videos" | null;
 
+function generationErrorText(error: unknown, fallback: string) {
+    if (error instanceof Error && error.message.trim()) return error.message;
+    if (typeof error === "string" && error.trim()) return error;
+    if (error && typeof error === "object") {
+        const value = error as { msg?: unknown; message?: unknown; detail?: unknown; error?: unknown };
+        const candidate = value.msg || value.message || value.detail || value.error;
+        if (typeof candidate === "string" && candidate.trim()) return candidate;
+        if (candidate && typeof candidate === "object" && "message" in candidate && typeof candidate.message === "string") return candidate.message;
+    }
+    return fallback;
+}
+
 const RATIO_OPTIONS = ["16:9", "9:16", "1:1", "4:3", "3:4"].map((value) => ({ value, label: value }));
 const RESOLUTION_OPTIONS = [
     { value: "480", label: "480p" },
@@ -470,7 +482,7 @@ export default function LongformPage() {
                 updateShot(projectId, shotId, { status: shot.video ? "ready" : shot.firstFrame ? "framed" : "draft" });
                 throw error;
             }
-            const text = error instanceof Error ? error.message : "视频生成失败";
+            const text = generationErrorText(error, "视频生成失败");
             setShotVideo(projectId, shotId, shot.video, "error", text);
             message.error(`镜头 ${shot.index + 1}：${text}`);
             throw error;

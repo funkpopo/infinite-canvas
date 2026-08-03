@@ -22,7 +22,10 @@ type AgnesVideoTask = {
     url?: string;
     output?: { video_url?: string; url?: string } | null;
     metadata?: { url?: string; size_mapping?: Record<string, unknown> } | null;
-    error?: { message?: string } | null;
+    msg?: string;
+    message?: string;
+    detail?: unknown;
+    error?: unknown;
 };
 type SeedanceTask = {
     id: string;
@@ -187,7 +190,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || "视频生成失败" };
+        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video) || "视频生成失败" };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
@@ -242,7 +245,7 @@ async function pollAgnesTask(config: AiConfig, task: VideoGenerationTask, option
             if (!url) return { status: "failed", error: "Agnes Video 任务成功但没有返回视频 URL" };
             return { status: "completed", result: await videoResultFromUrl(url, options) };
         }
-        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: state.error?.message || "Agnes Video 生成失败" };
+        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: readApiErrorMessage(state) || "Agnes Video 生成失败" };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "Agnes Video 任务查询失败"));
