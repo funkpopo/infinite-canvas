@@ -1,10 +1,11 @@
 import { useRef, type ReactNode } from "react";
 import { Button, Dropdown, Tooltip } from "antd";
-import { ArrowUp, Check, ChevronUp, Hand, ImagePlus, LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronUp, Cpu, Hand, ImagePlus, LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
 
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isPlainEnterKey } from "@/lib/keyboard-event";
-import type { AgentPermissionMode } from "@/stores/use-agent-store";
+import type { AgentModel, AgentPermissionMode, AgentReasoningEffort } from "@/stores/use-agent-store";
 import type { AgentChatAttachment } from "./agent-chat-message";
 
 export function AgentChatComposer({
@@ -23,6 +24,11 @@ export function AgentChatComposer({
     onConfirmToolsChange,
     permissionMode,
     onPermissionModeChange,
+    models,
+    model,
+    reasoningEffort,
+    onModelChange,
+    onReasoningEffortChange,
     left,
 }: {
     prompt: string;
@@ -40,6 +46,11 @@ export function AgentChatComposer({
     onConfirmToolsChange?: (confirmTools: boolean) => void;
     permissionMode?: AgentPermissionMode;
     onPermissionModeChange?: (permissionMode: AgentPermissionMode) => void;
+    models?: AgentModel[];
+    model?: string;
+    reasoningEffort?: AgentReasoningEffort | "";
+    onModelChange?: (model: string) => void;
+    onReasoningEffortChange?: (effort: AgentReasoningEffort) => void;
     left?: ReactNode;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +106,7 @@ export function AgentChatComposer({
                         ) : null}
                         {onConfirmToolsChange ? <ToolConfirmationMenu confirmTools={Boolean(confirmTools)} theme={theme} onChange={onConfirmToolsChange} /> : null}
                         {permissionMode && onPermissionModeChange ? <PermissionModeMenu permissionMode={permissionMode} theme={theme} onChange={onPermissionModeChange} /> : null}
+                        {models?.length && model && reasoningEffort && onModelChange && onReasoningEffortChange ? <AgentModelControls models={models} model={model} reasoningEffort={reasoningEffort} onModelChange={onModelChange} onReasoningEffortChange={onReasoningEffortChange} /> : null}
                         {left}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -109,6 +121,41 @@ export function AgentChatComposer({
         </div>
     );
 }
+
+function AgentModelControls({ models, model, reasoningEffort, onModelChange, onReasoningEffortChange }: { models: AgentModel[]; model: string; reasoningEffort: AgentReasoningEffort; onModelChange: (model: string) => void; onReasoningEffortChange: (effort: AgentReasoningEffort) => void }) {
+    const current = models.find((item) => item.model === model) || models[0];
+    return (
+        <div className="flex min-w-0 items-center gap-1">
+            <Select value={model} onValueChange={onModelChange}>
+                <SelectTrigger className="h-9 min-w-0 max-w-36 rounded-full border-0 bg-transparent px-2.5 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 dark:bg-transparent dark:hover:bg-white/10" title={current.displayName || current.model} aria-label="选择 Codex 模型">
+                    <Cpu className="size-3.5 shrink-0 opacity-70" />
+                    <span className="min-w-0 flex-1 truncate text-left">{current.displayName || current.model}</span>
+                </SelectTrigger>
+                <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] w-64 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
+                    {models.map((item) => <SelectItem key={item.model} value={item.model}>{item.displayName || item.model}</SelectItem>)}
+                </SelectContent>
+            </Select>
+            <Select value={reasoningEffort} onValueChange={(value) => onReasoningEffortChange(value as AgentReasoningEffort)}>
+                <SelectTrigger className="h-9 rounded-full border-0 bg-transparent px-2.5 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 dark:bg-transparent dark:hover:bg-white/10" aria-label="选择推理强度">
+                    <span>{effortLabels[reasoningEffort]}</span>
+                </SelectTrigger>
+                <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] min-w-32 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
+                    {current.supportedReasoningEfforts.map((item) => <SelectItem key={item.reasoningEffort} value={item.reasoningEffort}>{effortLabels[item.reasoningEffort]}</SelectItem>)}
+                </SelectContent>
+            </Select>
+        </div>
+    );
+}
+
+const effortLabels: Record<AgentReasoningEffort, string> = {
+    minimal: "最低",
+    low: "轻度",
+    medium: "中",
+    high: "高",
+    xhigh: "极高",
+    max: "最高",
+    ultra: "Ultra",
+};
 
 function PermissionModeMenu({ permissionMode, theme, onChange }: { permissionMode: AgentPermissionMode; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (permissionMode: AgentPermissionMode) => void }) {
     const current = permissionOptions.find((item) => item.key === permissionMode) || permissionOptions[0];

@@ -6,6 +6,15 @@ export type CodexTurnError = JsonRecord & { message: string };
 export type CodexItem = JsonRecord & { id: string; type: string; text?: string };
 export type CodexPlanStep = { step: string; status: "pending" | "inProgress" | "completed" };
 export type CodexPlanUpdate = { threadId: string; turnId: string; explanation?: string | null; plan: CodexPlanStep[]; turnStatus?: string };
+export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type CodexModel = JsonRecord & {
+    id: string;
+    model: string;
+    displayName: string;
+    defaultReasoningEffort: CodexReasoningEffort;
+    supportedReasoningEfforts: Array<{ reasoningEffort: CodexReasoningEffort; description?: string }>;
+    isDefault?: boolean;
+};
 
 export type CodexTurnInput =
     | { type: "text"; text: string; text_elements: [] }
@@ -53,8 +62,12 @@ type CodexRequestSpec = {
         params: { threadId: string };
         result: Record<string, never>;
     };
+    "model/list": {
+        params: { limit: number; includeHidden: boolean };
+        result: { data: CodexModel[]; nextCursor: string | null };
+    };
     "turn/start": {
-        params: { threadId: string; input: CodexTurnInput[]; approvalPolicy: "never" | "on-request"; sandboxPolicy: { type: "workspaceWrite"; networkAccess: boolean } | { type: "dangerFullAccess" } };
+        params: { threadId: string; input: CodexTurnInput[]; approvalPolicy: "never" | "on-request"; sandboxPolicy: { type: "workspaceWrite"; networkAccess: boolean } | { type: "dangerFullAccess" }; model?: string; effort?: CodexReasoningEffort };
         result: { turn: CodexTurn };
     };
     "turn/interrupt": {

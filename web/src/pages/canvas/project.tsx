@@ -157,7 +157,6 @@ function InfiniteCanvasPage() {
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);
     const toggleAgentPanel = useAgentStore((state) => state.togglePanel);
     const openAgentPanel = useAgentStore((state) => state.openPanel);
-    const setAgentState = useAgentStore((state) => state.setAgentState);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
@@ -352,11 +351,6 @@ function InfiniteCanvasPage() {
         };
         void restore();
     }, [hydrated, navigate, openProject, projectId]);
-
-    useEffect(() => {
-        if (!projectLoaded) return;
-        setAgentState({ activeThreadId: "", messages: [], tokenUsage: null, pendingTool: null });
-    }, [projectId, projectLoaded, setAgentState]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
